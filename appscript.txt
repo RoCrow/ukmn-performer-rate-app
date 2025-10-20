@@ -1,0 +1,401 @@
+// =================================================================
+// CONFIGURATION
+// =================================================================
+
+// IMPORTANT: Replace this with the URL of your deployed frontend web app.
+const WEB_APP_URL = 'https://rate.ukmusiciansnetwork.com'; 
+
+// --- Sheet Names ---
+const PERFORMERS_SHEET_NAME = 'Performers';
+const RATERS_SHEET_NAME = 'Raters';
+const RATINGS_SHEET_NAME = 'Ratings';
+
+// --- Token Expiration (in minutes) ---
+const TOKEN_EXPIRATION_MINUTES = 15;
+
+
+// =================================================================
+// UTILITY FUNCTIONS
+// =================================================================
+
+/**
+ * Creates a JSON response object for the web app.
+ * @param {object} data The data to be returned.
+ * @return {ContentService.TextOutput} The JSON response.
+ */
+function createJsonResponse(data) {
+  return ContentService.createTextOutput(JSON.stringify(data))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+
+/**
+ * Normalizes a date value from a sheet cell (can be a Date object or various string formats)
+ * into a consistent 'yyyy-MM-dd' string, using the spreadsheet's timezone.
+ * @param {Date|string|number} dateValue The value from the spreadsheet cell.
+ * @param {string} timezone The timezone of the spreadsheet.
+ * @return {string|null} The formatted date string or null if invalid.
+ */
+function normalizeDateString(dateValue, timezone) {
+  if (!dateValue) return null;
+
+  // If it's already a valid Date object
+  if (dateValue instanceof Date) {
+    try {
+      return Utilities.formatDate(dateValue, timezone, 'yyyy-MM-dd');
+    } catch(e) {
+      Logger.log(`Error formatting a valid Date object: ${dateValue}. Error: ${e.message}`);
+      return null;
+    }
+  }
+
+  // If it's a string or number, try to parse it
+  if (typeof dateValue === 'string' || typeof dateValue === 'number') {
+    try {
+      // Create a date object from the string/number. `new Date()` is flexible.
+      const parsedDate = new Date(dateValue);
+      
+      // Check if the parsed date is valid. An invalid date will have a time of NaN.
+      if (isNaN(parsedDate.getTime())) {
+        Logger.log(`Could not parse date value: "${dateValue}" into a valid date.`);
+        return null;
+      }
+      
+      // If valid, format it using the spreadsheet's timezone.
+      return Utilities.formatDate(parsedDate, timezone, 'yyyy-MM-dd');
+
+    } catch (e) {
+      Logger.log(`Exception while parsing date value "${dateValue}": ${e.message}`);
+      return null;
+    }
+  }
+  
+  // If it's some other type, we can't handle it.
+  Logger.log(`Unhandled date type for value: ${dateValue}`);
+  return null;
+}
+
+
+// =================================================================
+// MAIN ENDPOINT - doPost
+// This function is the single entry point for all requests from the web app.
+// =================================================================
+
+function doPost(e) {
+  try {
+    const payload = JSON.parse(e.postData.contents);
+    let responseData;
+
+    switch (payload.action) {
+      case 'getVenuesForToday':
+        responseData = handleGetVenuesForToday();
+        break;
+      case 'getPerformers':
+        responseData = handleGetPerformers(payload);
+        break;
+      case 'requestLogin':
+        responseData = handleRequestLogin(payload);
+        break;
+      case 'verifyToken':
+        responseData = handleVerifyToken(payload);
+        break;
+      case 'getTodaysRatings':
+        responseData = handleGetTodaysRatings(payload);
+        break;
+      case 'submitRatings':
+        responseData = handleSubmitRatings(payload);
+        break;
+      case 'debugDateParsing':
+        responseData = handleDebugDateParsing();
+        break;
+      default:
+        throw new Error(`Unknown action: ${payload.action}`);
+    }
+
+    return createJsonResponse({ status: 'success', ...responseData });
+  } catch (error) {
+    Logger.log(`Error in doPost: ${error.message}\nStack: ${error.stack}`);
+    return createJsonResponse({ status: 'error', message: `Script Error: ${error.message}` });
+  }
+}
+
+// =================================================================
+// ACTION HANDLERS
+// =================================================================
+
+/**
+ * Finds all unique venues with performances scheduled for today.
+ * Uses a robust date normalization function to handle various date formats.
+ */
+function handleGetVenuesForToday() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(PERFORMERS_SHEET_NAME);
+  if (!sheet) throw new Error(`Sheet "${PERFORMERS_SHEET_NAME}" not found.`);
+
+  const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 4).getValues();
+  
+  const spreadsheetTimezone = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+  const todayString = Utilities.formatDate(new Date(), spreadsheetTimezone, 'yyyy-MM-dd');
+  Logger.log(`Searching for venues for date: ${todayString} in timezone: ${spreadsheetTimezone}`);
+  
+  const venues = new Set();
+  data.forEach((row, index) => {
+    const venueName = row[2];
+    const performanceDateValue = row[3];
+    
+    const performanceDateString = normalizeDateString(performanceDateValue, spreadsheetTimezone);
+
+    Logger.log(`Row ${index + 2}: Venue="${venueName}", OriginalDate="${performanceDateValue}", NormalizedDate="${performanceDateString}"`);
+
+    if (venueName && performanceDateString && performanceDateString === todayString) {
+      venues.add(venueName);
+      Logger.log(`  -> Match found! Added venue: ${venueName}`);
+    }
+  });
+
+  Logger.log(`Found ${venues.size} venues for today: ${Array.from(venues).join(', ')}`);
+  return { venues: Array.from(venues) };
+}
+
+
+/**
+ * Gets all performers for a specific venue for today.
+ * Uses a robust date normalization function to handle various date formats.
+ */
+function handleGetPerformers(payload) {
+    if (!payload.venueName) throw new Error("venueName is required.");
+
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(PERFORMERS_SHEET_NAME);
+    if (!sheet) throw new Error(`Sheet "${PERFORMERS_SHEET_NAME}" not found.`);
+
+    const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+
+    const spreadsheetTimezone = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+    const todayString = Utilities.formatDate(new Date(), spreadsheetTimezone, 'yyyy-MM-dd');
+    Logger.log(`Searching for performers at "${payload.venueName}" for date: ${todayString}`);
+
+    const performers = data.filter(row => {
+        const venueName = row[2];
+        const performanceDateValue = row[3];
+
+        if (!venueName || venueName.trim() !== payload.venueName.trim()) {
+            return false;
+        }
+
+        const performanceDateString = normalizeDateString(performanceDateValue, spreadsheetTimezone);
+        return performanceDateString === todayString;
+
+    }).map(row => ({
+        id: row[0],
+        name: row[1],
+        bio: row[4] || '',
+        socialLink: row[5] || '',
+        setTime: row[6] || ''
+    }));
+    
+    Logger.log(`Found ${performers.length} performers for "${payload.venueName}" today.`);
+    return { performers };
+}
+
+
+/**
+ * Generates a login token and emails a magic link to the user.
+ */
+function handleRequestLogin(payload) {
+  const { email, firstName, lastName, venueName } = payload;
+  if (!email || !firstName || !lastName || !venueName) {
+    throw new Error("Missing required fields for login request.");
+  }
+
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RATERS_SHEET_NAME);
+  if (!sheet) throw new Error(`Sheet "${RATERS_SHEET_NAME}" not found.`);
+
+  const token = Utilities.getUuid();
+  const expiry = new Date(new Date().getTime() + TOKEN_EXPIRATION_MINUTES * 60 * 1000);
+  
+  // Upsert rater info
+  const data = sheet.getDataRange().getValues();
+  let raterRow = -1;
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0] === email) {
+      raterRow = i + 1;
+      break;
+    }
+  }
+
+  if (raterRow !== -1) {
+    sheet.getRange(raterRow, 1, 1, 6).setValues([[email, firstName, lastName, venueName, token, expiry]]);
+  } else {
+    sheet.appendRow([email, firstName, lastName, venueName, token, expiry]);
+  }
+  
+  // Send Email
+  const loginUrl = `${WEB_APP_URL}?token=${token}`;
+  const subject = `Your Secure Login Link for the Performer Rating App`;
+  const body = `
+    <html>
+      <body>
+        <h2>Hello ${firstName},</h2>
+        <p>Click the link below to securely log in and start rating performers at ${venueName}.</p>
+        <p><a href="${loginUrl}" style="font-size: 16px; font-weight: bold; color: white; background-color: #6d28d9; padding: 12px 24px; text-decoration: none; border-radius: 25px;">Log In Now</a></p>
+        <p>This link is valid for ${TOKEN_EXPIRATION_MINUTES} minutes and can only be used once.</p>
+        <p>If you did not request this link, you can safely ignore this email.</p>
+      </body>
+    </html>`;
+  
+  MailApp.sendEmail({
+    to: email,
+    subject: subject,
+    htmlBody: body,
+  });
+
+  return { message: 'Login link sent.' };
+}
+
+
+/**
+ * Verifies a login token and returns user details.
+ */
+function handleVerifyToken(payload) {
+  const { token } = payload;
+  if (!token) throw new Error("Token is required for verification.");
+
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RATERS_SHEET_NAME);
+  if (!sheet) throw new Error(`Sheet "${RATERS_SHEET_NAME}" not found.`);
+
+  const data = sheet.getDataRange().getValues();
+  
+  let raterInfo = null;
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][4] === token) { // Column E is Auth Token
+      const expiryDate = new Date(data[i][5]); // Column F is Token Expiry
+      if (expiryDate.getTime() > new Date().getTime()) {
+        raterInfo = {
+          email: data[i][0],
+          firstName: data[i][1],
+          lastName: data[i][2],
+          venue: data[i][3],
+        };
+        // Invalidate token after use
+        sheet.getRange(i + 1, 5, 1, 2).setValues([["", ""]]);
+      }
+      break;
+    }
+  }
+
+  if (raterInfo) {
+    return raterInfo;
+  } else {
+    throw new Error("Invalid or expired token.");
+  }
+}
+
+/**
+ * Retrieves all ratings submitted by a specific rater for a specific venue today.
+ */
+function handleGetTodaysRatings(payload) {
+    const { raterEmail, venueName } = payload;
+    if (!raterEmail || !venueName) throw new Error("raterEmail and venueName are required.");
+
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RATINGS_SHEET_NAME);
+    if (!sheet) throw new Error(`Sheet "${RATINGS_SHEET_NAME}" not found.`);
+
+    const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+
+    const spreadsheetTimezone = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+    const todayString = Utilities.formatDate(new Date(), spreadsheetTimezone, 'yyyy-MM-dd');
+    
+    const ratings = {};
+    data.forEach(row => {
+        const timestampValue = row[0];
+        const currentRaterEmail = row[1];
+        const currentVenueName = row[4];
+        
+        const timestampString = normalizeDateString(timestampValue, spreadsheetTimezone);
+
+        if (timestampString === todayString && currentRaterEmail === raterEmail && currentVenueName === venueName) {
+            const performerId = row[5];
+            const ratingValue = row[7];
+            ratings[performerId] = ratingValue;
+        }
+    });
+
+    return { ratings };
+}
+
+
+/**
+ * Submits new ratings to the spreadsheet.
+ */
+function handleSubmitRatings(payload) {
+  const { ratings, raterEmail, firstName, lastName, venueName, latitude, longitude } = payload;
+  if (!ratings || !raterEmail || !venueName || !firstName || !lastName) {
+    throw new Error("Missing required fields for submitting ratings.");
+  }
+  
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RATINGS_SHEET_NAME);
+  if (!sheet) throw new Error(`Sheet "${RATINGS_SHEET_NAME}" not found.`);
+
+  const timestamp = new Date();
+  
+  const rowsToAdd = ratings.map(rating => {
+    return [
+      timestamp,
+      raterEmail,
+      firstName,
+      lastName,
+      venueName,
+      rating.id,
+      rating.name,
+      rating.rating,
+      (rating.feedbackTags || []).join(', '),
+      latitude || '',
+      longitude || '',
+    ];
+  });
+  
+  if (rowsToAdd.length > 0) {
+      sheet.getRange(sheet.getLastRow() + 1, 1, rowsToAdd.length, rowsToAdd[0].length).setValues(rowsToAdd);
+  }
+
+  return { message: 'Ratings submitted successfully.' };
+}
+
+/**
+ * A diagnostic function to help debug date parsing issues.
+ */
+function handleDebugDateParsing() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(PERFORMERS_SHEET_NAME);
+  if (!sheet) throw new Error(`Sheet "${PERFORMERS_SHEET_NAME}" not found.`);
+  
+  const spreadsheetTimezone = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+  const todayString = Utilities.formatDate(new Date(), spreadsheetTimezone, 'yyyy-MM-dd');
+  
+  // Read up to 15 data rows (plus header)
+  const numRowsToFetch = Math.min(sheet.getLastRow(), 16);
+  if (numRowsToFetch < 2) {
+    return { 
+        today: todayString,
+        timezone: spreadsheetTimezone,
+        debugData: [{ row: 0, originalDate: 'Sheet is empty or has no data rows.', normalizedDate: 'N/A'}]
+    };
+  }
+
+  const data = sheet.getRange(2, 4, numRowsToFetch - 1, 1).getValues(); // Column D is Performance Date
+  
+  const debugData = data.map((row, index) => {
+    const dateValue = row[0];
+    return {
+      row: index + 2,
+      originalDate: dateValue,
+      dateType: typeof dateValue,
+      isDateObject: dateValue instanceof Date,
+      normalizedDate: normalizeDateString(dateValue, spreadsheetTimezone),
+    };
+  });
+  
+  return { 
+    today: todayString,
+    timezone: spreadsheetTimezone,
+    debugData: debugData
+  };
+}

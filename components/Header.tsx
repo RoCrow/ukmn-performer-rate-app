@@ -19,7 +19,7 @@ const Header: React.FC<HeaderProps> = ({ venueName, userName, onLogout }) => {
         <div className="flex items-center justify-center gap-4">
             <MusicNoteIcon className="w-10 h-10 text-brand-primary" />
             <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-white">
-                Performer <span className="text-brand-primary">Rate</span>
+                Rate <span className="text-brand-primary">Performers</span>
             </h1>
         </div>
         <p className="mt-4 max-w-2xl mx-auto text-lg text-gray-400">

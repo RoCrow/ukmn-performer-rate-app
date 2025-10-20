@@ -3,6 +3,17 @@ import type { Performer, Rating } from '../types';
 // The URL for the deployed Google Apps Script. This is the single endpoint for all backend operations.
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwVzj7Czo4ae1mWFIs2FFkCfF1kyO-5IwJUkT2g4RQiUCgiRO0nOA64k9ysOex6CFjI/exec';
 
+interface SubmitRatingsPayload {
+    action: 'submitRatings';
+    ratings: Rating[];
+    raterEmail: string;
+    venueName: string;
+    firstName: string;
+    lastName: string;
+    latitude?: number;
+    longitude?: number;
+}
+
 // Helper function to handle all API requests to the Google Apps Script
 const postToWebApp = async (payload: object) => {
     try {
@@ -68,6 +79,14 @@ export const getVenuesForToday = async (): Promise<string[]> => {
     return result.venues;
 }
 
+export const getTodaysRatings = async (raterEmail: string, venueName: string): Promise<Record<string, number>> => {
+    const result = await postToWebApp({ action: 'getTodaysRatings', raterEmail, venueName });
+    if (!result.ratings) {
+        throw new Error("Ratings data not found in the script's response.");
+    }
+    return result.ratings;
+}
+
 export const getPerformers = async (venueName: string): Promise<Performer[]> => {
   try {
     const result = await postToWebApp({ action: 'getPerformers', venueName });
@@ -82,8 +101,15 @@ export const getPerformers = async (venueName: string): Promise<Performer[]> => 
   }
 };
 
-export const submitRatings = async (ratings: Rating[], raterEmail: string, venueName: string, firstName: string, lastName: string): Promise<void> => {
-  const payload = {
+export const submitRatings = async (
+    ratings: Rating[], 
+    raterEmail: string, 
+    venueName: string, 
+    firstName: string, 
+    lastName: string,
+    coords: GeolocationCoordinates | null
+): Promise<void> => {
+  const payload: SubmitRatingsPayload = {
     action: 'submitRatings',
     ratings,
     raterEmail,
@@ -91,8 +117,19 @@ export const submitRatings = async (ratings: Rating[], raterEmail: string, venue
     firstName,
     lastName,
   };
+
+  if (coords) {
+      payload.latitude = coords.latitude;
+      payload.longitude = coords.longitude;
+  }
+
   await postToWebApp(payload);
 };
+
+
+export const runDiagnostics = async (): Promise<any> => {
+    return await postToWebApp({ action: 'debugDateParsing' });
+}
 
 
 const getMockPerformers = (): Promise<Performer[]> => {

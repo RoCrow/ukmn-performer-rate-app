@@ -1,12 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import Button from './Button';
-import { requestLoginLink, getVenuesForToday } from '../services/performerService';
+import { requestLoginLink, getVenuesForToday, runDiagnostics } from '../services/performerService';
 
 interface LoginScreenProps {
   initialError?: string | null;
 }
 
 type LoginState = 'IDLE' | 'SENDING' | 'SENT' | 'ERROR';
+type DiagnosticData = {
+    today: string;
+    timezone: string;
+    debugData: {
+        row: number;
+        originalDate: any;
+        dateType: string;
+        isDateObject: boolean;
+        normalizedDate: string | null;
+    }[];
+};
+
 
 const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
   const [email, setEmail] = useState('');
@@ -15,10 +27,16 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
   const [lastName, setLastName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loginState, setLoginState] = useState<LoginState>('IDLE');
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
 
   const [venues, setVenues] = useState<string[]>([]);
   const [isVenuesLoading, setIsVenuesLoading] = useState<boolean>(true);
   const [venuesError, setVenuesError] = useState<string | null>(null);
+  
+  const [isDiagnosing, setIsDiagnosing] = useState<boolean>(false);
+  const [diagnosticData, setDiagnosticData] = useState<DiagnosticData | null>(null);
+  const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
+
 
   useEffect(() => {
       if(initialError) {
@@ -46,6 +64,22 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
       }
       fetchVenues();
   }, []);
+  
+  const handleRunDiagnostics = async () => {
+      setIsDiagnosing(true);
+      setDiagnosticData(null);
+      setDiagnosticError(null);
+      try {
+          const data = await runDiagnostics();
+          setDiagnosticData(data);
+      } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+          setDiagnosticError(`Diagnostic failed: ${errorMessage}`);
+      } finally {
+          setIsDiagnosing(false);
+      }
+  };
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,6 +92,11 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
       setError('Please enter a valid email address.');
       setLoginState('ERROR');
       return;
+    }
+    if (!privacyAccepted) {
+        setError('You must accept the Privacy Policy to continue.');
+        setLoginState('ERROR');
+        return;
     }
     
     setError(null);
@@ -89,15 +128,51 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
       );
   }
 
+  const renderDiagnostics = () => {
+    if (diagnosticError) {
+        return <div className="mt-4 p-4 bg-red-900/50 text-red-300 rounded-lg">{diagnosticError}</div>
+    }
+    if (diagnosticData) {
+        return (
+            <div className="mt-4 p-4 bg-gray-700 rounded-lg text-left text-sm font-mono">
+                <h4 className="text-lg font-bold text-brand-accent mb-2">Diagnostic Report</h4>
+                <p><span className="text-gray-400">Script's Timezone:</span> {diagnosticData.timezone}</p>
+                <p className="mb-2"><span className="text-gray-400">Script's "Today":</span> {diagnosticData.today}</p>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                        <thead>
+                            <tr className="bg-gray-800 text-gray-300">
+                                <th className="p-2 text-left">Row</th>
+                                <th className="p-2 text-left">Original Date in Sheet</th>
+                                <th className="p-2 text-left">Normalized Result</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-gray-700">
+                        {diagnosticData.debugData.map(d => (
+                            <tr key={d.row} className="border-t border-gray-600">
+                                <td className="p-2">{d.row}</td>
+                                <td className="p-2">{String(d.originalDate) || '(empty)'}</td>
+                                <td className={`p-2 ${d.normalizedDate === diagnosticData.today ? 'text-green-400' : 'text-amber-400'}`}>{d.normalizedDate || 'null'}</td>
+                            </tr>
+                        ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        )
+    }
+    return null;
+  }
+
   return (
     <div className="min-h-screen bg-gray-900 flex flex-col justify-center items-center p-4 font-sans animate-fade-in">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
             <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-white">
-                Performer <span className="text-brand-primary">Rate</span>
+                Rate <span className="text-brand-primary">Performers</span>
             </h1>
           <p className="mt-4 text-lg text-gray-400">
-            Enter your details to receive a login link.
+            Your feedback helps discover and develop the UK's next top artists. Enter your details to get started.
           </p>
         </div>
         
@@ -171,8 +246,41 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
                 {venues.map(v => <option key={v} value={v}>{v}</option>)}
             </select>
             {venuesError && (
-                <p className="text-sm text-red-400 mt-2">{venuesError}</p>
+                <div className="text-sm text-red-400 mt-2 text-center">
+                    <p>{venuesError}</p>
+                    <button type="button" onClick={handleRunDiagnostics} disabled={isDiagnosing} className="mt-2 text-xs text-brand-primary hover:underline disabled:text-gray-500">
+                        {isDiagnosing ? 'Running Test...' : 'Run Diagnostic Test'}
+                    </button>
+                </div>
             )}
+            {renderDiagnostics()}
+          </div>
+
+          <div className="flex items-start">
+            <div className="flex items-center h-5">
+              <input
+                id="privacy"
+                name="privacy"
+                type="checkbox"
+                checked={privacyAccepted}
+                onChange={(e) => setPrivacyAccepted(e.target.checked)}
+                className="focus:ring-brand-primary h-4 w-4 text-brand-primary border-gray-600 rounded bg-gray-700"
+                aria-required="true"
+              />
+            </div>
+            <div className="ml-3 text-sm">
+              <label htmlFor="privacy" className="font-medium text-gray-300">
+                I agree to the{' '}
+                <a 
+                    href="https://ukmusiciansnetwork.com/privacy" 
+                    className="text-brand-primary hover:underline" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                >
+                  Privacy Policy
+                </a>
+              </label>
+            </div>
           </div>
 
           {(loginState === 'ERROR' && error) && (
@@ -182,7 +290,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
           )}
 
           <div className="pt-2">
-            <Button type="submit" className="w-full" disabled={loginState === 'SENDING' || isVenuesLoading || venues.length === 0}>
+            <Button type="submit" className="w-full" disabled={loginState === 'SENDING' || isVenuesLoading || venues.length === 0 || !privacyAccepted}>
               {loginState === 'SENDING' ? 'Sending...' : 'Send Login Link'}
             </Button>
           </div>

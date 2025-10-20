@@ -1,15 +1,15 @@
-
 import React, { useState } from 'react';
 
 interface StarRatingProps {
   count: number;
   rating: number;
   onRate: (rating: number) => void;
+  disabled?: boolean;
 }
 
 const StarIcon: React.FC<{filled: boolean; className?: string}> = ({filled, className}) => (
     <svg 
-        className={`w-8 h-8 cursor-pointer ${className} ${filled ? 'text-brand-accent' : 'text-gray-600'}`} 
+        className={`w-8 h-8 ${className} ${filled ? 'text-brand-accent' : 'text-gray-600'}`} 
         xmlns="http://www.w3.org/2000/svg" 
         viewBox="0 0 24 24" 
         fill="currentColor"
@@ -19,23 +19,27 @@ const StarIcon: React.FC<{filled: boolean; className?: string}> = ({filled, clas
 );
 
 
-const StarRating: React.FC<StarRatingProps> = ({ count, rating, onRate }) => {
+const StarRating: React.FC<StarRatingProps> = ({ count, rating, onRate, disabled = false }) => {
   const [hoverRating, setHoverRating] = useState(0);
 
   const stars = Array.from({ length: count }, (_, i) => i + 1);
 
   return (
-    <div className="flex items-center space-x-1">
+    <div className={`flex items-center space-x-1 ${disabled ? 'cursor-not-allowed' : ''}`}>
       {stars.map((starValue) => (
         <button
           key={starValue}
-          onMouseEnter={() => setHoverRating(starValue)}
-          onMouseLeave={() => setHoverRating(0)}
-          onClick={() => onRate(starValue)}
-          aria-label={`Rate ${starValue} star${starValue > 1 ? 's' : ''}`}
-          className="transition-transform duration-200 ease-in-out hover:scale-125 focus:outline-none focus:ring-2 focus:ring-brand-accent rounded-full"
+          onMouseEnter={!disabled ? () => setHoverRating(starValue) : undefined}
+          onMouseLeave={!disabled ? () => setHoverRating(0) : undefined}
+          onClick={!disabled ? () => onRate(starValue) : undefined}
+          aria-label={disabled ? `Rated ${rating} out of ${count} stars` : `Rate ${starValue} star${starValue > 1 ? 's' : ''}`}
+          className={`transition-transform duration-200 ease-in-out ${!disabled ? 'hover:scale-125' : ''} focus:outline-none focus:ring-2 focus:ring-brand-accent rounded-full`}
+          disabled={disabled}
         >
-          <StarIcon filled={(hoverRating || rating) >= starValue} />
+          <StarIcon 
+            filled={(hoverRating || rating) >= starValue} 
+            className={disabled ? 'cursor-not-allowed' : 'cursor-pointer'}
+          />
         </button>
       ))}
     </div>

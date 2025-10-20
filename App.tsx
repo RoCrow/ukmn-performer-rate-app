@@ -1,19 +1,23 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import type { Performer, Rating } from './types';
-import { getPerformers, submitRatings, requestLoginLink, loginWithToken } from './services/performerService';
+import { getPerformers, submitRatings, requestLoginLink, loginWithToken, getTodaysRatings } from './services/performerService';
 import Header from './components/Header';
 import PerformerCard from './components/PerformerCard';
 import Button from './components/Button';
 import LoginScreen from './components/LoginScreen';
 
 type AuthState = 'LOGGED_OUT' | 'CHECKING_TOKEN' | 'LOGGED_IN' | 'TOKEN_ERROR';
+type SubmissionStatus = 'IDLE' | 'AWAITING_CONSENT' | 'GETTING_LOCATION' | 'SUBMITTING';
+type RatingInput = { score: number; tags: string[] };
 
 const App: React.FC = () => {
   const [performers, setPerformers] = useState<Performer[]>([]);
-  const [ratings, setRatings] = useState<Record<string, number>>({});
+  const [ratings, setRatings] = useState<Record<string, RatingInput>>({});
+  const [existingRatings, setExistingRatings] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [submissionStatus, setSubmissionStatus] = useState<SubmissionStatus>('IDLE');
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
   
@@ -29,13 +33,21 @@ const App: React.FC = () => {
     // Check for a session in localStorage first
     const savedSession = localStorage.getItem('performer-rater-session');
     if (savedSession) {
-      const { email, venue, firstName, lastName } = JSON.parse(savedSession);
-      setRaterEmail(email);
-      setVenueName(venue);
-      setFirstName(firstName);
-      setLastName(lastName);
-      setAuthState('LOGGED_IN');
-      return;
+      const { email, venue, firstName, lastName, expiry } = JSON.parse(savedSession);
+      
+      // Check if the session is expired
+      if (expiry && new Date().getTime() > expiry) {
+        // Session expired, remove it and stay logged out
+        localStorage.removeItem('performer-rater-session');
+      } else {
+        // Session is valid, log the user in
+        setRaterEmail(email);
+        setVenueName(venue);
+        setFirstName(firstName);
+        setLastName(lastName);
+        setAuthState('LOGGED_IN');
+        return; // Stop further execution
+      }
     }
 
     // If no session, check for a login token in the URL
@@ -51,8 +63,13 @@ const App: React.FC = () => {
           setFirstName(firstName);
           setLastName(lastName);
           setAuthState('LOGGED_IN');
-          // Persist session
-          localStorage.setItem('performer-rater-session', JSON.stringify({ email, venue, firstName, lastName }));
+          
+          // Persist session with an expiry timestamp (midnight)
+          const expiry = new Date();
+          expiry.setHours(23, 59, 59, 999); // Set to end of the current day
+          const sessionData = { email, venue, firstName, lastName, expiry: expiry.getTime() };
+          localStorage.setItem('performer-rater-session', JSON.stringify(sessionData));
+
           // Clean the URL
           window.history.replaceState({}, document.title, window.location.pathname);
         })
@@ -66,41 +83,57 @@ const App: React.FC = () => {
   }, []);
 
 
-  const fetchPerformers = useCallback(async () => {
-    if (!venueName) return;
+  const fetchInitialData = useCallback(async () => {
+    if (!venueName || !raterEmail) return;
 
     try {
       setIsLoading(true);
       setError(null);
-      const data = await getPerformers(venueName);
-      setPerformers(data);
+      
+      const [performersData, existingRatingsData] = await Promise.all([
+          getPerformers(venueName),
+          getTodaysRatings(raterEmail, venueName)
+      ]);
+
+      setPerformers(performersData);
+      setExistingRatings(existingRatingsData);
+
     } catch (err) {
-      setError('Failed to fetch performers. Please try again later.');
+      setError('Failed to fetch performers or ratings. Please try again later.');
       console.error(err);
     } finally {
       setIsLoading(false);
     }
-  }, [venueName]);
+  }, [venueName, raterEmail]);
 
   useEffect(() => {
-    if (authState === 'LOGGED_IN' && venueName) {
-      fetchPerformers();
+    if (authState === 'LOGGED_IN' && venueName && raterEmail) {
+      fetchInitialData();
     }
-  }, [authState, fetchPerformers, venueName]);
+  }, [authState, fetchInitialData, venueName, raterEmail]);
 
-  const handleRatingChange = (performerId: string, rating: number) => {
-    setRatings(prevRatings => ({
-      ...prevRatings,
-      [performerId]: rating,
+  const handleRatingChange = (performerId: string, newScore: number) => {
+    if (existingRatings[performerId]) return;
+    setRatings(prev => ({
+      ...prev,
+      [performerId]: { ...prev[performerId], score: newScore },
     }));
   };
 
-  const handleSubmit = async () => {
+  const handleFeedbackChange = (performerId: string, newTags: string[]) => {
+    if (existingRatings[performerId]) return;
+    setRatings(prev => ({
+      ...prev,
+      [performerId]: { score: prev[performerId]?.score || 0, tags: newTags },
+    }));
+  };
+
+  const performRatingSubmission = async (coords: GeolocationCoordinates) => {
     if (!raterEmail || !venueName || !firstName || !lastName) {
         setSubmissionError("Authentication error. Please log in again.");
         return;
     }
-    setIsSubmitting(true);
+    setSubmissionStatus('SUBMITTING');
     setSubmissionError(null);
     try {
       const ratingsToSubmit: Rating[] = Object.keys(ratings).map((performerId) => {
@@ -108,21 +141,60 @@ const App: React.FC = () => {
         return {
           id: performerId,
           name: performer ? performer.name : 'Unknown Performer',
-          rating: ratings[performerId],
+          rating: ratings[performerId].score,
+          feedbackTags: ratings[performerId].tags || [],
         };
-      });
+      }).filter(r => r.rating > 0); // Only submit entries that have a star rating
 
-      await submitRatings(ratingsToSubmit, raterEmail, venueName, firstName, lastName);
-      setIsSubmitted(true);
+      if (ratingsToSubmit.length === 0) {
+        setSubmissionError("No new ratings to submit.");
+        setSubmissionStatus('IDLE');
+        return;
+      }
+
+      await submitRatings(ratingsToSubmit, raterEmail, venueName, firstName, lastName, coords);
+      
+      const newExistingRatings = { ...existingRatings };
+      ratingsToSubmit.forEach(r => {
+        newExistingRatings[r.id] = r.rating;
+      });
+      setExistingRatings(newExistingRatings);
       setRatings({});
+      
+      setIsSubmitted(true);
       setTimeout(() => setIsSubmitted(false), 4000);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       setSubmissionError(`Submission Failed: ${errorMessage}`);
       console.error(err);
     } finally {
-      setIsSubmitting(false);
+      setSubmissionStatus('IDLE');
     }
+  };
+
+  const handleInitialSubmit = () => {
+    setSubmissionError(null);
+    setSubmissionStatus('AWAITING_CONSENT');
+  };
+
+  const handleConsentAndSubmit = () => {
+    setSubmissionStatus('GETTING_LOCATION');
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        performRatingSubmission(position.coords);
+      },
+      (error) => {
+        console.warn(`Geolocation error: ${error.message}`);
+        setSubmissionError('Location permission is required to submit ratings. Please enable it in your browser settings and try again.');
+        setSubmissionStatus('IDLE');
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0,
+      }
+    );
   };
   
   const handleLogout = () => {
@@ -132,12 +204,13 @@ const App: React.FC = () => {
     setFirstName(null);
     setLastName(null);
     setRatings({});
+    setExistingRatings({});
     setPerformers([]);
     setAuthState('LOGGED_OUT');
     setIsLoading(true);
   };
 
-  const ratedCount = Object.keys(ratings).length;
+  const ratedCount = Object.keys(ratings).filter(id => ratings[id] && ratings[id].score > 0).length;
   const totalPerformers = performers.length;
 
   if (authState === 'LOGGED_OUT' || authState === 'TOKEN_ERROR') {
@@ -151,6 +224,41 @@ const App: React.FC = () => {
             <p className="mt-4 text-gray-400">{authState === 'CHECKING_TOKEN' ? 'Verifying login...' : `Loading performers for ${venueName}...`}</p>
         </div>
      );
+  }
+
+    const LocationConsentScreen = () => (
+        <div className="fixed inset-0 bg-gray-900/90 backdrop-blur-sm flex flex-col justify-center items-center p-4 z-50 animate-fade-in">
+            <div className="bg-gray-800 p-8 rounded-xl shadow-2xl max-w-lg text-center">
+                <h2 className="text-2xl font-bold text-brand-accent mb-4">Location Verification Required</h2>
+                <div className="text-gray-300 space-y-4 text-left">
+                    <p>To ensure all ratings are genuine and prevent fraud, we need to quickly verify you're at the venue.</p>
+                    <p>
+                        <strong className="text-white">This is a one-time check for this submission only.</strong> We do not track your location continuously or store it after today.
+                    </p>
+                </div>
+                <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
+                     <Button onClick={() => setSubmissionStatus('IDLE')} className="bg-gray-600 hover:bg-gray-500 w-full sm:w-auto">
+                        Cancel
+                     </Button>
+                     <Button onClick={handleConsentAndSubmit} className="w-full sm:w-auto">
+                        Verify Location & Submit
+                     </Button>
+                </div>
+            </div>
+        </div>
+    );
+
+  if (submissionStatus === 'AWAITING_CONSENT') {
+      return <LocationConsentScreen />;
+  }
+
+
+  const getButtonText = () => {
+      switch(submissionStatus) {
+          case 'GETTING_LOCATION': return 'Verifying Location...';
+          case 'SUBMITTING': return 'Submitting...';
+          default: return 'Submit All Ratings';
+      }
   }
 
   const renderContent = () => {
@@ -182,15 +290,23 @@ const App: React.FC = () => {
 
     return (
       <div className="space-y-4">
-        {performers.map((performer, index) => (
-          <div key={performer.id} className="animate-slide-in-bottom" style={{ animationDelay: `${index * 100}ms`}}>
-            <PerformerCard
-              performer={performer}
-              rating={ratings[performer.id] || 0}
-              onRatingChange={(rating) => handleRatingChange(performer.id, rating)}
-            />
-          </div>
-        ))}
+        {performers.map((performer, index) => {
+           const isRated = !!existingRatings[performer.id];
+           const currentRating = existingRatings[performer.id] || ratings[performer.id]?.score || 0;
+           const currentTags = ratings[performer.id]?.tags || [];
+           return (
+              <div key={performer.id} className="animate-slide-in-bottom" style={{ animationDelay: `${index * 100}ms`}}>
+                <PerformerCard
+                  performer={performer}
+                  rating={currentRating}
+                  onRatingChange={(rating) => handleRatingChange(performer.id, rating)}
+                  isRated={isRated}
+                  selectedTags={currentTags}
+                  onFeedbackChange={(tags) => handleFeedbackChange(performer.id, tags)}
+                />
+              </div>
+            );
+        })}
       </div>
     );
   };
@@ -203,9 +319,9 @@ const App: React.FC = () => {
           {renderContent()}
           {!isLoading && !error && !isSubmitted && performers.length > 0 && (
             <footer className="mt-12 text-center animate-fade-in">
-              <p className="mb-4 text-gray-400">{ratedCount} of {totalPerformers} performers rated.</p>
-              <Button onClick={handleSubmit} disabled={ratedCount === 0 || isSubmitting}>
-                {isSubmitting ? 'Submitting...' : 'Submit All Ratings'}
+              <p className="mb-4 text-gray-400">{ratedCount} of {totalPerformers - Object.keys(existingRatings).length} new performers rated.</p>
+              <Button onClick={handleInitialSubmit} disabled={ratedCount === 0 || submissionStatus !== 'IDLE'}>
+                {getButtonText()}
               </Button>
               {submissionError && (
                 <p className="mt-4 text-red-400 bg-red-900/20 p-3 rounded-lg">{submissionError}</p>
