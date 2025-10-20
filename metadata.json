@@ -1,0 +1,5 @@
+{
+  "name": "UKMN Performer Rate App",
+  "description": "A sleek and modern web application that allows users to rate music performers on a simple five-star scale. The list of performers is designed to be dynamically updated, simulating a real-time data feed from a backend service.",
+  "requestFramePermissions": []
+}
