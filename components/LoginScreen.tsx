@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import Button from './Button';
-import { requestLoginLink } from '../services/performerService';
+import { requestLoginLink, getVenuesForToday } from '../services/performerService';
 
 interface LoginScreenProps {
   initialError?: string | null;
@@ -11,8 +11,14 @@ type LoginState = 'IDLE' | 'SENDING' | 'SENT' | 'ERROR';
 const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
   const [email, setEmail] = useState('');
   const [venue, setVenue] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loginState, setLoginState] = useState<LoginState>('IDLE');
+
+  const [venues, setVenues] = useState<string[]>([]);
+  const [isVenuesLoading, setIsVenuesLoading] = useState<boolean>(true);
+  const [venuesError, setVenuesError] = useState<string | null>(null);
 
   useEffect(() => {
       if(initialError) {
@@ -21,10 +27,30 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
       }
   }, [initialError]);
 
+  useEffect(() => {
+      const fetchVenues = async () => {
+          try {
+              setIsVenuesLoading(true);
+              setVenuesError(null);
+              const fetchedVenues = await getVenuesForToday();
+              setVenues(fetchedVenues);
+              if (fetchedVenues.length > 0) {
+                  setVenue(fetchedVenues[0]);
+              }
+          } catch(err) {
+              const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+              setVenuesError(`Could not load venues: ${errorMessage}`);
+          } finally {
+              setIsVenuesLoading(false);
+          }
+      }
+      fetchVenues();
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim() || !venue.trim()) {
-      setError('Both email and venue name are required.');
+    if (!email.trim() || !venue.trim() || !firstName.trim() || !lastName.trim()) {
+      setError('All fields are required.');
       setLoginState('ERROR');
       return;
     }
@@ -38,7 +64,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
     setLoginState('SENDING');
 
     try {
-        await requestLoginLink(email, venue);
+        await requestLoginLink(email, venue, firstName, lastName);
         setLoginState('SENT');
     } catch(err) {
         const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
@@ -79,6 +105,39 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
             onSubmit={handleSubmit}
             className="bg-gray-800 p-8 rounded-xl shadow-2xl space-y-6"
         >
+            <div className="flex flex-col sm:flex-row gap-4">
+                <div className="flex-1">
+                    <label htmlFor="firstName" className="block text-sm font-medium text-gray-300 mb-2">
+                    First Name
+                    </label>
+                    <input
+                    type="text"
+                    id="firstName"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    placeholder="Jane"
+                    className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary"
+                    aria-required="true"
+                    disabled={loginState === 'SENDING'}
+                    />
+                </div>
+                <div className="flex-1">
+                    <label htmlFor="lastName" className="block text-sm font-medium text-gray-300 mb-2">
+                    Last Name
+                    </label>
+                    <input
+                    type="text"
+                    id="lastName"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    placeholder="Doe"
+                    className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary"
+                    aria-required="true"
+                    disabled={loginState === 'SENDING'}
+                    />
+                </div>
+            </div>
+
           <div>
             <label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-2">
               Your Email
@@ -99,16 +158,21 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
             <label htmlFor="venue" className="block text-sm font-medium text-gray-300 mb-2">
               Venue Name
             </label>
-            <input
-              type="text"
+            <select
               id="venue"
               value={venue}
               onChange={(e) => setVenue(e.target.value)}
-              placeholder="e.g., The Grand Concert Hall"
-              className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary"
+              className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:opacity-50 disabled:cursor-not-allowed"
               aria-required="true"
-              disabled={loginState === 'SENDING'}
-            />
+              disabled={loginState === 'SENDING' || isVenuesLoading || venues.length === 0}
+            >
+                {isVenuesLoading && <option>Loading venues...</option>}
+                {!isVenuesLoading && venues.length === 0 && <option>No events scheduled for today</option>}
+                {venues.map(v => <option key={v} value={v}>{v}</option>)}
+            </select>
+            {venuesError && (
+                <p className="text-sm text-red-400 mt-2">{venuesError}</p>
+            )}
           </div>
 
           {(loginState === 'ERROR' && error) && (
@@ -118,7 +182,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
           )}
 
           <div className="pt-2">
-            <Button type="submit" className="w-full" disabled={loginState === 'SENDING'}>
+            <Button type="submit" className="w-full" disabled={loginState === 'SENDING' || isVenuesLoading || venues.length === 0}>
               {loginState === 'SENDING' ? 'Sending...' : 'Send Login Link'}
             </Button>
           </div>

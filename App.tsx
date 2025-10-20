@@ -19,6 +19,8 @@ const App: React.FC = () => {
   
   const [raterEmail, setRaterEmail] = useState<string | null>(null);
   const [venueName, setVenueName] = useState<string | null>(null);
+  const [firstName, setFirstName] = useState<string | null>(null);
+  const [lastName, setLastName] = useState<string | null>(null);
   const [authState, setAuthState] = useState<AuthState>('LOGGED_OUT');
   const [tokenError, setTokenError] = useState<string | null>(null);
 
@@ -27,9 +29,11 @@ const App: React.FC = () => {
     // Check for a session in localStorage first
     const savedSession = localStorage.getItem('performer-rater-session');
     if (savedSession) {
-      const { email, venue } = JSON.parse(savedSession);
+      const { email, venue, firstName, lastName } = JSON.parse(savedSession);
       setRaterEmail(email);
       setVenueName(venue);
+      setFirstName(firstName);
+      setLastName(lastName);
       setAuthState('LOGGED_IN');
       return;
     }
@@ -41,12 +45,14 @@ const App: React.FC = () => {
     if (token) {
       setAuthState('CHECKING_TOKEN');
       loginWithToken(token)
-        .then(({ email, venue }) => {
+        .then(({ email, venue, firstName, lastName }) => {
           setRaterEmail(email);
           setVenueName(venue);
+          setFirstName(firstName);
+          setLastName(lastName);
           setAuthState('LOGGED_IN');
           // Persist session
-          localStorage.setItem('performer-rater-session', JSON.stringify({ email, venue }));
+          localStorage.setItem('performer-rater-session', JSON.stringify({ email, venue, firstName, lastName }));
           // Clean the URL
           window.history.replaceState({}, document.title, window.location.pathname);
         })
@@ -61,10 +67,12 @@ const App: React.FC = () => {
 
 
   const fetchPerformers = useCallback(async () => {
+    if (!venueName) return;
+
     try {
       setIsLoading(true);
       setError(null);
-      const data = await getPerformers();
+      const data = await getPerformers(venueName);
       setPerformers(data);
     } catch (err) {
       setError('Failed to fetch performers. Please try again later.');
@@ -72,13 +80,13 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [venueName]);
 
   useEffect(() => {
-    if (authState === 'LOGGED_IN') {
+    if (authState === 'LOGGED_IN' && venueName) {
       fetchPerformers();
     }
-  }, [authState, fetchPerformers]);
+  }, [authState, fetchPerformers, venueName]);
 
   const handleRatingChange = (performerId: string, rating: number) => {
     setRatings(prevRatings => ({
@@ -88,7 +96,7 @@ const App: React.FC = () => {
   };
 
   const handleSubmit = async () => {
-    if (!raterEmail || !venueName) {
+    if (!raterEmail || !venueName || !firstName || !lastName) {
         setSubmissionError("Authentication error. Please log in again.");
         return;
     }
@@ -104,7 +112,7 @@ const App: React.FC = () => {
         };
       });
 
-      await submitRatings(ratingsToSubmit, raterEmail, venueName);
+      await submitRatings(ratingsToSubmit, raterEmail, venueName, firstName, lastName);
       setIsSubmitted(true);
       setRatings({});
       setTimeout(() => setIsSubmitted(false), 4000);
@@ -121,6 +129,8 @@ const App: React.FC = () => {
     localStorage.removeItem('performer-rater-session');
     setRaterEmail(null);
     setVenueName(null);
+    setFirstName(null);
+    setLastName(null);
     setRatings({});
     setPerformers([]);
     setAuthState('LOGGED_OUT');
@@ -138,7 +148,7 @@ const App: React.FC = () => {
      return (
         <div className="min-h-screen bg-gray-900 flex flex-col justify-center items-center p-4">
             <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-brand-primary"></div>
-            <p className="mt-4 text-gray-400">{authState === 'CHECKING_TOKEN' ? 'Verifying login...' : 'Loading performers...'}</p>
+            <p className="mt-4 text-gray-400">{authState === 'CHECKING_TOKEN' ? 'Verifying login...' : `Loading performers for ${venueName}...`}</p>
         </div>
      );
   }
@@ -157,6 +167,15 @@ const App: React.FC = () => {
             <div className="text-center p-8 bg-gray-800 rounded-xl shadow-2xl animate-fade-in">
                 <h2 className="text-3xl font-bold text-brand-accent mb-4">Thank You!</h2>
                 <p className="text-lg text-gray-300">Your ratings have been submitted successfully.</p>
+            </div>
+        )
+    }
+    
+    if (performers.length === 0) {
+        return (
+             <div className="text-center p-8 bg-gray-800 rounded-xl shadow-2xl animate-fade-in">
+                <h2 className="text-2xl font-bold text-white mb-2">No Performers Found</h2>
+                <p className="text-lg text-gray-400">There are no performers listed for {venueName} at this time.</p>
             </div>
         )
     }
@@ -179,7 +198,7 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-900 font-sans p-4 sm:p-8">
       <div className="max-w-7xl mx-auto">
-        <Header venueName={venueName} onLogout={handleLogout} />
+        <Header venueName={venueName} userName={firstName && lastName ? `${firstName} ${lastName}` : null} onLogout={handleLogout} />
         <main className="mt-12">
           {renderContent()}
           {!isLoading && !error && !isSubmitted && performers.length > 0 && (

@@ -51,18 +51,26 @@ const postToWebApp = async (payload: object) => {
 };
 
 
-export const requestLoginLink = async (email: string, venueName: string): Promise<void> => {
-    await postToWebApp({ action: 'requestLogin', email, venueName });
+export const requestLoginLink = async (email: string, venueName: string, firstName: string, lastName: string): Promise<void> => {
+    await postToWebApp({ action: 'requestLogin', email, venueName, firstName, lastName });
 };
 
-export const loginWithToken = async (token: string): Promise<{ email: string, venue: string }> => {
+export const loginWithToken = async (token: string): Promise<{ email: string, venue: string, firstName: string, lastName: string }> => {
     const result = await postToWebApp({ action: 'verifyToken', token });
-    return { email: result.email, venue: result.venue };
+    return { email: result.email, venue: result.venue, firstName: result.firstName, lastName: result.lastName };
 };
 
-export const getPerformers = async (): Promise<Performer[]> => {
+export const getVenuesForToday = async (): Promise<string[]> => {
+    const result = await postToWebApp({ action: 'getVenuesForToday' });
+    if (!result.venues) {
+        throw new Error("Venue data not found in the script's response.");
+    }
+    return result.venues;
+}
+
+export const getPerformers = async (venueName: string): Promise<Performer[]> => {
   try {
-    const result = await postToWebApp({ action: 'getPerformers' });
+    const result = await postToWebApp({ action: 'getPerformers', venueName });
     if (!result.performers) {
         throw new Error("Performers data not found in the script's response.");
     }
@@ -74,12 +82,14 @@ export const getPerformers = async (): Promise<Performer[]> => {
   }
 };
 
-export const submitRatings = async (ratings: Rating[], raterEmail: string, venueName: string): Promise<void> => {
+export const submitRatings = async (ratings: Rating[], raterEmail: string, venueName: string, firstName: string, lastName: string): Promise<void> => {
   const payload = {
     action: 'submitRatings',
     ratings,
     raterEmail,
     venueName,
+    firstName,
+    lastName,
   };
   await postToWebApp(payload);
 };

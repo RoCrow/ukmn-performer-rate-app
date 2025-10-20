@@ -1,4 +1,3 @@
-
 import React from 'react';
 
 const MusicNoteIcon: React.FC<{className?: string}> = ({className}) => (
@@ -9,11 +8,12 @@ const MusicNoteIcon: React.FC<{className?: string}> = ({className}) => (
 
 interface HeaderProps {
     venueName?: string | null;
+    userName?: string | null;
     onLogout?: () => void;
 }
 
 
-const Header: React.FC<HeaderProps> = ({ venueName, onLogout }) => {
+const Header: React.FC<HeaderProps> = ({ venueName, userName, onLogout }) => {
   return (
     <header className="text-center animate-fade-in relative">
         <div className="flex items-center justify-center gap-4">
@@ -22,9 +22,10 @@ const Header: React.FC<HeaderProps> = ({ venueName, onLogout }) => {
                 Performer <span className="text-brand-primary">Rate</span>
             </h1>
         </div>
-      <p className="mt-4 max-w-2xl mx-auto text-lg text-gray-400">
-        {venueName ? `Rating performances at: ${venueName}` : "Rate the live performances from today's event."}
-      </p>
+        <p className="mt-4 max-w-2xl mx-auto text-lg text-gray-400">
+            {userName && <span className="block font-semibold text-white mb-1">Welcome, {userName}!</span>}
+            {venueName ? `You are rating performances at: ${venueName}` : "Rate the live performances from today's event."}
+        </p>
       {onLogout && (
           <div className="absolute top-0 right-0">
                 <button 
