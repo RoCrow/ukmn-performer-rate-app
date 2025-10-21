@@ -1,4 +1,4 @@
-import type { Performer, Rating } from '../types';
+import type { Performer, Rating, LeaderboardEntry } from '../types';
 
 // The URL for the deployed Google Apps Script. This is the single endpoint for all backend operations.
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwVzj7Czo4ae1mWFIs2FFkCfF1kyO-5IwJUkT2g4RQiUCgiRO0nOA64k9ysOex6CFjI/exec';
@@ -61,6 +61,21 @@ const postToWebApp = async (payload: object) => {
     }
 };
 
+export const getFeedbackSummary = async (performerId: string, venueName: string): Promise<string> => {
+    const result = await postToWebApp({ action: 'getFeedbackSummary', performerId, venueName });
+    if (typeof result.summary !== 'string') {
+        throw new Error("Summary data not found in the script's response.");
+    }
+    return result.summary;
+}
+
+export const getFeedbackTags = async (): Promise<{positive: string[], constructive: string[]}> => {
+    const result = await postToWebApp({ action: 'getFeedbackTags' });
+    if (!result.positive || !result.constructive) {
+        throw new Error("Tag data not found in the script's response.");
+    }
+    return result;
+}
 
 export const requestLoginLink = async (email: string, venueName: string, firstName: string, lastName: string): Promise<void> => {
     await postToWebApp({ action: 'requestLogin', email, venueName, firstName, lastName });
@@ -85,6 +100,14 @@ export const getTodaysRatings = async (raterEmail: string, venueName: string): P
         throw new Error("Ratings data not found in the script's response.");
     }
     return result.ratings;
+}
+
+export const getLeaderboardData = async (venueName: string): Promise<LeaderboardEntry[]> => {
+    const result = await postToWebApp({ action: 'getLeaderboardData', venueName });
+    if (!result.leaderboard) {
+        throw new Error("Leaderboard data not found in the script's response.");
+    }
+    return result.leaderboard;
 }
 
 export const getPerformers = async (venueName: string): Promise<Performer[]> => {

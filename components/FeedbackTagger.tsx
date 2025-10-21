@@ -1,12 +1,10 @@
-
 import React from 'react';
-
-const POSITIVE_TAGS = ['Great Vocals', 'Awesome Energy', 'Crowd Engagement', 'Original Songs', 'Skilled Musician'];
-const CONSTRUCTIVE_TAGS = ['Low Energy', 'Sound Issues', 'Repetitive', 'Needs Practice', 'Tuning'];
 
 interface FeedbackTaggerProps {
     selectedTags: string[];
     onSelectionChange: (tags: string[]) => void;
+    positiveTags: string[];
+    constructiveTags: string[];
 }
 
 const Tag: React.FC<{label: string, isSelected: boolean, onClick: () => void, isPositive: boolean}> = ({label, isSelected, onClick, isPositive}) => {
@@ -15,13 +13,13 @@ const Tag: React.FC<{label: string, isSelected: boolean, onClick: () => void, is
     const unselectedClasses = 'bg-gray-700 text-gray-300 hover:bg-gray-600';
     
     return (
-        <button onClick={onClick} className={`${baseClasses} ${isSelected ? selectedClasses : unselectedClasses}`}>
+        <button type="button" onClick={onClick} className={`${baseClasses} ${isSelected ? selectedClasses : unselectedClasses}`}>
             {label}
         </button>
     )
 }
 
-const FeedbackTagger: React.FC<FeedbackTaggerProps> = ({ selectedTags, onSelectionChange }) => {
+const FeedbackTagger: React.FC<FeedbackTaggerProps> = ({ selectedTags, onSelectionChange, positiveTags, constructiveTags }) => {
 
     const handleTagClick = (tag: string) => {
         const newSelection = selectedTags.includes(tag)
@@ -32,34 +30,38 @@ const FeedbackTagger: React.FC<FeedbackTaggerProps> = ({ selectedTags, onSelecti
 
     return (
         <div className="space-y-4 animate-fade-in">
-             <div>
-                <p className="text-sm font-semibold text-gray-400 mb-2">What did you like? (Optional)</p>
-                <div className="flex flex-wrap gap-2">
-                    {POSITIVE_TAGS.map(tag => (
-                        <Tag
-                            key={tag}
-                            label={tag}
-                            isSelected={selectedTags.includes(tag)}
-                            onClick={() => handleTagClick(tag)}
-                            isPositive={true}
-                        />
-                    ))}
+             {positiveTags.length > 0 && (
+                <div>
+                    <p className="text-sm font-semibold text-gray-400 mb-2">What did you like? (Optional)</p>
+                    <div className="flex flex-wrap gap-2">
+                        {positiveTags.map(tag => (
+                            <Tag
+                                key={tag}
+                                label={tag}
+                                isSelected={selectedTags.includes(tag)}
+                                onClick={() => handleTagClick(tag)}
+                                isPositive={true}
+                            />
+                        ))}
+                    </div>
                 </div>
-            </div>
-             <div>
-                <p className="text-sm font-semibold text-gray-400 mb-2">What could be improved? (Optional)</p>
-                <div className="flex flex-wrap gap-2">
-                    {CONSTRUCTIVE_TAGS.map(tag => (
-                        <Tag
-                            key={tag}
-                            label={tag}
-                            isSelected={selectedTags.includes(tag)}
-                            onClick={() => handleTagClick(tag)}
-                            isPositive={false}
-                        />
-                    ))}
+             )}
+             {constructiveTags.length > 0 && (
+                <div>
+                    <p className="text-sm font-semibold text-gray-400 mb-2">What could be improved? (Optional)</p>
+                    <div className="flex flex-wrap gap-2">
+                        {constructiveTags.map(tag => (
+                            <Tag
+                                key={tag}
+                                label={tag}
+                                isSelected={selectedTags.includes(tag)}
+                                onClick={() => handleTagClick(tag)}
+                                isPositive={false}
+                            />
+                        ))}
+                    </div>
                 </div>
-            </div>
+             )}
         </div>
     )
 }

@@ -4,6 +4,11 @@ import { requestLoginLink, getVenuesForToday, runDiagnostics } from '../services
 
 interface LoginScreenProps {
   initialError?: string | null;
+  isChangingDetails?: boolean;
+  onDetailsChanged?: (details: { email: string, venue: string, firstName: string, lastName: string }) => void;
+  initialEmail?: string | null;
+  initialFirstName?: string | null;
+  initialLastName?: string | null;
 }
 
 type LoginState = 'IDLE' | 'SENDING' | 'SENT' | 'ERROR';
@@ -20,14 +25,21 @@ type DiagnosticData = {
 };
 
 
-const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
+const LoginScreen: React.FC<LoginScreenProps> = ({ 
+    initialError,
+    isChangingDetails = false,
+    onDetailsChanged,
+    initialEmail,
+    initialFirstName,
+    initialLastName 
+}) => {
   const [email, setEmail] = useState('');
   const [venue, setVenue] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loginState, setLoginState] = useState<LoginState>('IDLE');
-  const [privacyAccepted, setPrivacyAccepted] = useState(false);
+  const [privacyAccepted, setPrivacyAccepted] = useState(isChangingDetails); // Auto-accept if they've already logged in
 
   const [venues, setVenues] = useState<string[]>([]);
   const [isVenuesLoading, setIsVenuesLoading] = useState<boolean>(true);
@@ -44,6 +56,14 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
           setLoginState('ERROR');
       }
   }, [initialError]);
+
+  useEffect(() => {
+      if (isChangingDetails) {
+        if(initialEmail) setEmail(initialEmail);
+        if(initialFirstName) setFirstName(initialFirstName);
+        if(initialLastName) setLastName(initialLastName);
+      }
+  }, [isChangingDetails, initialEmail, initialFirstName, initialLastName]);
 
   useEffect(() => {
       const fetchVenues = async () => {
@@ -100,15 +120,30 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
     }
     
     setError(null);
-    setLoginState('SENDING');
 
-    try {
-        await requestLoginLink(email, venue, firstName, lastName);
-        setLoginState('SENT');
-    } catch(err) {
-        const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-        setError(`Failed to send login link: ${errorMessage}`);
-        setLoginState('ERROR');
+    // --- LOGIC FOR SUBMISSION ---
+
+    // FOR TESTING: Set to 'true' to bypass email magic link and log in directly.
+    // Set to 'false' to restore the original magic link functionality.
+    const TEMPORARY_BYPASS_ENABLED = true;
+
+    if (TEMPORARY_BYPASS_ENABLED || (isChangingDetails && onDetailsChanged)) {
+        // Path 1: Bypass email (for testing or when changing details)
+        if (onDetailsChanged) {
+            onDetailsChanged({ email, venue, firstName, lastName });
+        }
+        return;
+    } else {
+        // Path 2: Original magic link flow for new logins
+        setLoginState('SENDING');
+        try {
+            await requestLoginLink(email, venue, firstName, lastName);
+            setLoginState('SENT');
+        } catch(err) {
+            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+            setError(`Failed to send login link: ${errorMessage}`);
+            setLoginState('ERROR');
+        }
     }
   };
 
@@ -172,7 +207,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
                 Rate <span className="text-brand-primary">Performers</span>
             </h1>
           <p className="mt-4 text-lg text-gray-400">
-            Your feedback helps discover and develop the UK's next top artists. Enter your details to get started.
+            {isChangingDetails ? 'Select a new venue to continue rating.' : "Your feedback helps discover and develop the UK's next top artists. Enter your details to get started."}
           </p>
         </div>
         
@@ -191,9 +226,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
                     placeholder="Jane"
-                    className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary"
+                    className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:opacity-70 disabled:cursor-not-allowed"
                     aria-required="true"
-                    disabled={loginState === 'SENDING'}
+                    disabled={loginState === 'SENDING' || isChangingDetails}
                     />
                 </div>
                 <div className="flex-1">
@@ -206,9 +241,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
                     value={lastName}
                     onChange={(e) => setLastName(e.target.value)}
                     placeholder="Doe"
-                    className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary"
+                    className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:opacity-70 disabled:cursor-not-allowed"
                     aria-required="true"
-                    disabled={loginState === 'SENDING'}
+                    disabled={loginState === 'SENDING' || isChangingDetails}
                     />
                 </div>
             </div>
@@ -223,9 +258,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
-              className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary"
+              className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:opacity-70 disabled:cursor-not-allowed"
               aria-required="true"
-              disabled={loginState === 'SENDING'}
+              disabled={loginState === 'SENDING' || isChangingDetails}
             />
           </div>
 
@@ -239,7 +274,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
               onChange={(e) => setVenue(e.target.value)}
               className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:opacity-50 disabled:cursor-not-allowed"
               aria-required="true"
-              disabled={loginState === 'SENDING' || isVenuesLoading || venues.length === 0}
+              disabled={isVenuesLoading || venues.length === 0}
             >
                 {isVenuesLoading && <option>Loading venues...</option>}
                 {!isVenuesLoading && venues.length === 0 && <option>No events scheduled for today</option>}
@@ -255,33 +290,36 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
             )}
             {renderDiagnostics()}
           </div>
+        
+          {!isChangingDetails && (
+            <div className="flex items-start">
+                <div className="flex items-center h-5">
+                <input
+                    id="privacy"
+                    name="privacy"
+                    type="checkbox"
+                    checked={privacyAccepted}
+                    onChange={(e) => setPrivacyAccepted(e.target.checked)}
+                    className="focus:ring-brand-primary h-4 w-4 text-brand-primary border-gray-600 rounded bg-gray-700"
+                    aria-required="true"
+                />
+                </div>
+                <div className="ml-3 text-sm">
+                <label htmlFor="privacy" className="font-medium text-gray-300">
+                    I agree to the{' '}
+                    <a 
+                        href="https://ukmusiciansnetwork.com/privacy" 
+                        className="text-brand-primary hover:underline" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                    >
+                    Privacy Policy
+                    </a>
+                </label>
+                </div>
+            </div>
+          )}
 
-          <div className="flex items-start">
-            <div className="flex items-center h-5">
-              <input
-                id="privacy"
-                name="privacy"
-                type="checkbox"
-                checked={privacyAccepted}
-                onChange={(e) => setPrivacyAccepted(e.target.checked)}
-                className="focus:ring-brand-primary h-4 w-4 text-brand-primary border-gray-600 rounded bg-gray-700"
-                aria-required="true"
-              />
-            </div>
-            <div className="ml-3 text-sm">
-              <label htmlFor="privacy" className="font-medium text-gray-300">
-                I agree to the{' '}
-                <a 
-                    href="https://ukmusiciansnetwork.com/privacy" 
-                    className="text-brand-primary hover:underline" 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                >
-                  Privacy Policy
-                </a>
-              </label>
-            </div>
-          </div>
 
           {(loginState === 'ERROR' && error) && (
             <p className="text-red-400 bg-red-900/30 text-center p-3 rounded-md">
@@ -290,8 +328,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ initialError }) => {
           )}
 
           <div className="pt-2">
-            <Button type="submit" className="w-full" disabled={loginState === 'SENDING' || isVenuesLoading || venues.length === 0 || !privacyAccepted}>
-              {loginState === 'SENDING' ? 'Sending...' : 'Send Login Link'}
+            <Button type="submit" className="w-full" disabled={isVenuesLoading || venues.length === 0 || !privacyAccepted}>
+              {isChangingDetails ? 'Update & Continue' : 'Start Rating'}
             </Button>
           </div>
         </form>

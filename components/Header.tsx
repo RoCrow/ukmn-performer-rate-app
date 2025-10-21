@@ -1,3 +1,4 @@
+
 import React from 'react';
 
 const MusicNoteIcon: React.FC<{className?: string}> = ({className}) => (
@@ -9,11 +10,11 @@ const MusicNoteIcon: React.FC<{className?: string}> = ({className}) => (
 interface HeaderProps {
     venueName?: string | null;
     userName?: string | null;
-    onLogout?: () => void;
+    onChangeDetails?: () => void;
 }
 
 
-const Header: React.FC<HeaderProps> = ({ venueName, userName, onLogout }) => {
+const Header: React.FC<HeaderProps> = ({ venueName, userName, onChangeDetails }) => {
   return (
     <header className="text-center animate-fade-in relative">
         <div className="flex items-center justify-center gap-4">
@@ -26,10 +27,10 @@ const Header: React.FC<HeaderProps> = ({ venueName, userName, onLogout }) => {
             {userName && <span className="block font-semibold text-white mb-1">Welcome, {userName}!</span>}
             {venueName ? `You are rating performances at: ${venueName}` : "Rate the live performances from today's event."}
         </p>
-      {onLogout && (
+      {onChangeDetails && (
           <div className="absolute top-0 right-0">
                 <button 
-                    onClick={onLogout}
+                    onClick={onChangeDetails}
                     className="text-sm text-gray-400 hover:text-white bg-gray-800/50 px-3 py-1 rounded-md transition-colors"
                     aria-label="Change rater or venue"
                 >

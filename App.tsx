@@ -1,15 +1,15 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
-import type { Performer, Rating } from './types';
-import { getPerformers, submitRatings, requestLoginLink, loginWithToken, getTodaysRatings } from './services/performerService';
+import type { Performer, Rating, LeaderboardEntry } from './types';
+import { getPerformers, submitRatings, loginWithToken, getTodaysRatings, getLeaderboardData, getFeedbackTags } from './services/performerService';
 import Header from './components/Header';
 import PerformerCard from './components/PerformerCard';
 import Button from './components/Button';
 import LoginScreen from './components/LoginScreen';
+import Leaderboard from './components/Leaderboard';
 
 type AuthState = 'LOGGED_OUT' | 'CHECKING_TOKEN' | 'LOGGED_IN' | 'TOKEN_ERROR';
 type SubmissionStatus = 'IDLE' | 'AWAITING_CONSENT' | 'GETTING_LOCATION' | 'SUBMITTING';
-type RatingInput = { score: number; tags: string[] };
+type RatingInput = { score: number; tags: string[]; comment: string };
 
 const App: React.FC = () => {
   const [performers, setPerformers] = useState<Performer[]>([]);
@@ -27,6 +27,40 @@ const App: React.FC = () => {
   const [lastName, setLastName] = useState<string | null>(null);
   const [authState, setAuthState] = useState<AuthState>('LOGGED_OUT');
   const [tokenError, setTokenError] = useState<string | null>(null);
+  
+  const [leaderboardData, setLeaderboardData] = useState<LeaderboardEntry[]>([]);
+  const [isLeaderboardLoading, setIsLeaderboardLoading] = useState<boolean>(true);
+  
+  const [feedbackTags, setFeedbackTags] = useState<{positive: string[], constructive: string[]}>({ positive: [], constructive: [] });
+
+
+  // Persists session data to localStorage.
+  // If it's a new login, it creates a new expiry timestamp. Otherwise, it preserves the existing one.
+  const updateSession = (data: { email: string, venue: string, firstName: string, lastName: string }, isNewLogin: boolean = false) => {
+      const sessionData = { ...data, expiry: 0 };
+      if (isNewLogin) {
+          const expiryDate = new Date();
+          expiryDate.setHours(23, 59, 59, 999);
+          sessionData.expiry = expiryDate.getTime();
+      } else {
+          const savedSession = JSON.parse(localStorage.getItem('performer-rater-session') || '{}');
+          sessionData.expiry = savedSession.expiry || 0; // Fallback
+      }
+      localStorage.setItem('performer-rater-session', JSON.stringify(sessionData));
+  }
+
+  // Handler for when the user submits new details from the LoginScreen without a token
+  const handleDetailsChanged = (details: { email: string; venue: string; firstName: string; lastName: string; }) => {
+      // If there's no existing session, it's a new login for the day.
+      const isNewLogin = !localStorage.getItem('performer-rater-session');
+
+      setRaterEmail(details.email);
+      setVenueName(details.venue);
+      setFirstName(details.firstName);
+      setLastName(details.lastName);
+      updateSession(details, isNewLogin);
+      setAuthState('LOGGED_IN');
+  };
 
 
   useEffect(() => {
@@ -65,10 +99,7 @@ const App: React.FC = () => {
           setAuthState('LOGGED_IN');
           
           // Persist session with an expiry timestamp (midnight)
-          const expiry = new Date();
-          expiry.setHours(23, 59, 59, 999); // Set to end of the current day
-          const sessionData = { email, venue, firstName, lastName, expiry: expiry.getTime() };
-          localStorage.setItem('performer-rater-session', JSON.stringify(sessionData));
+          updateSession({ email, venue, firstName, lastName }, true);
 
           // Clean the URL
           window.history.replaceState({}, document.title, window.location.pathname);
@@ -88,21 +119,27 @@ const App: React.FC = () => {
 
     try {
       setIsLoading(true);
+      setIsLeaderboardLoading(true);
       setError(null);
       
-      const [performersData, existingRatingsData] = await Promise.all([
+      const [performersData, existingRatingsData, leaderboardResult, tagsData] = await Promise.all([
           getPerformers(venueName),
-          getTodaysRatings(raterEmail, venueName)
+          getTodaysRatings(raterEmail, venueName),
+          getLeaderboardData(venueName),
+          getFeedbackTags()
       ]);
 
       setPerformers(performersData);
       setExistingRatings(existingRatingsData);
+      setLeaderboardData(leaderboardResult);
+      setFeedbackTags(tagsData);
 
     } catch (err) {
       setError('Failed to fetch performers or ratings. Please try again later.');
       console.error(err);
     } finally {
       setIsLoading(false);
+      setIsLeaderboardLoading(false);
     }
   }, [venueName, raterEmail]);
 
@@ -116,7 +153,7 @@ const App: React.FC = () => {
     if (existingRatings[performerId]) return;
     setRatings(prev => ({
       ...prev,
-      [performerId]: { ...prev[performerId], score: newScore },
+      [performerId]: { ...prev[performerId], score: newScore, comment: prev[performerId]?.comment || '' },
     }));
   };
 
@@ -124,7 +161,19 @@ const App: React.FC = () => {
     if (existingRatings[performerId]) return;
     setRatings(prev => ({
       ...prev,
-      [performerId]: { score: prev[performerId]?.score || 0, tags: newTags },
+      [performerId]: { score: prev[performerId]?.score || 0, tags: newTags, comment: prev[performerId]?.comment || '' },
+    }));
+  };
+
+  const handleCommentChange = (performerId: string, newComment: string) => {
+    if (existingRatings[performerId]) return;
+    setRatings(prev => ({
+        ...prev,
+        [performerId]: { 
+            score: prev[performerId]?.score || 0, 
+            tags: prev[performerId]?.tags || [],
+            comment: newComment 
+        },
     }));
   };
 
@@ -136,15 +185,12 @@ const App: React.FC = () => {
     setSubmissionStatus('SUBMITTING');
     setSubmissionError(null);
     try {
-      const ratingsToSubmit: Rating[] = Object.keys(ratings).map((performerId) => {
-        const performer = performers.find(p => p.id === performerId);
-        return {
+      const ratingsToSubmit: Rating[] = Object.keys(ratings).map((performerId) => ({
           id: performerId,
-          name: performer ? performer.name : 'Unknown Performer',
           rating: ratings[performerId].score,
           feedbackTags: ratings[performerId].tags || [],
-        };
-      }).filter(r => r.rating > 0); // Only submit entries that have a star rating
+          comment: ratings[performerId].comment || '',
+      })).filter(r => r.rating > 0); // Only submit entries that have a star rating
 
       if (ratingsToSubmit.length === 0) {
         setSubmissionError("No new ratings to submit.");
@@ -162,6 +208,10 @@ const App: React.FC = () => {
       setRatings({});
       
       setIsSubmitted(true);
+      
+      // Re-fetch leaderboard data to show immediate impact
+      getLeaderboardData(venueName).then(setLeaderboardData).catch(err => console.error("Failed to refresh leaderboard", err));
+
       setTimeout(() => setIsSubmitted(false), 4000);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
@@ -197,15 +247,13 @@ const App: React.FC = () => {
     );
   };
   
-  const handleLogout = () => {
-    localStorage.removeItem('performer-rater-session');
-    setRaterEmail(null);
+  const handleChangeDetails = () => {
+    // We keep firstName, lastName, and email in state.
+    // We only clear the venue-specific data and go back to the login screen.
     setVenueName(null);
-    setFirstName(null);
-    setLastName(null);
+    setPerformers([]);
     setRatings({});
     setExistingRatings({});
-    setPerformers([]);
     setAuthState('LOGGED_OUT');
     setIsLoading(true);
   };
@@ -214,7 +262,19 @@ const App: React.FC = () => {
   const totalPerformers = performers.length;
 
   if (authState === 'LOGGED_OUT' || authState === 'TOKEN_ERROR') {
-    return <LoginScreen initialError={tokenError} />;
+    // If raterEmail exists, it means we are in the "change details" flow.
+    // If not, it's a fresh login.
+    const isChanging = !!raterEmail && authState !== 'TOKEN_ERROR';
+    return (
+        <LoginScreen
+            initialError={tokenError}
+            isChangingDetails={isChanging}
+            onDetailsChanged={handleDetailsChanged}
+            initialEmail={raterEmail}
+            initialFirstName={firstName}
+            initialLastName={lastName}
+        />
+    );
   }
 
   if (authState === 'CHECKING_TOKEN' || (authState === 'LOGGED_IN' && isLoading)) {
@@ -287,6 +347,9 @@ const App: React.FC = () => {
             </div>
         )
     }
+    
+    // Find the maximum rating count for the hype meter scaling
+    const maxRatingCount = leaderboardData.reduce((max, p) => Math.max(max, p.ratingCount), 0);
 
     return (
       <div className="space-y-4">
@@ -294,6 +357,9 @@ const App: React.FC = () => {
            const isRated = !!existingRatings[performer.id];
            const currentRating = existingRatings[performer.id] || ratings[performer.id]?.score || 0;
            const currentTags = ratings[performer.id]?.tags || [];
+           const currentComment = ratings[performer.id]?.comment || '';
+           const leaderboardInfo = leaderboardData.find(p => p.id === performer.id);
+           
            return (
               <div key={performer.id} className="animate-slide-in-bottom" style={{ animationDelay: `${index * 100}ms`}}>
                 <PerformerCard
@@ -303,6 +369,14 @@ const App: React.FC = () => {
                   isRated={isRated}
                   selectedTags={currentTags}
                   onFeedbackChange={(tags) => handleFeedbackChange(performer.id, tags)}
+                  comment={currentComment}
+                  onCommentChange={(comment) => handleCommentChange(performer.id, comment)}
+                  ratingCount={leaderboardInfo?.ratingCount || 0}
+                  commentCount={leaderboardInfo?.commentCount || 0}
+                  maxRatingCount={maxRatingCount}
+                  positiveTags={feedbackTags.positive}
+                  constructiveTags={feedbackTags.constructive}
+                  venueName={venueName || ''}
                 />
               </div>
             );
@@ -314,8 +388,9 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-900 font-sans p-4 sm:p-8">
       <div className="max-w-7xl mx-auto">
-        <Header venueName={venueName} userName={firstName && lastName ? `${firstName} ${lastName}` : null} onLogout={handleLogout} />
+        <Header venueName={venueName} userName={firstName && lastName ? `${firstName} ${lastName}` : null} onChangeDetails={handleChangeDetails} />
         <main className="mt-12">
+          { authState === 'LOGGED_IN' && <Leaderboard data={leaderboardData} isLoading={isLeaderboardLoading} /> }
           {renderContent()}
           {!isLoading && !error && !isSubmitted && performers.length > 0 && (
             <footer className="mt-12 text-center animate-fade-in">

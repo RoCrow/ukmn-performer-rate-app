@@ -9,14 +9,69 @@ const WEB_APP_URL = 'https://rate.ukmusiciansnetwork.com';
 const PERFORMERS_SHEET_NAME = 'Performers';
 const RATERS_SHEET_NAME = 'Raters';
 const RATINGS_SHEET_NAME = 'Ratings';
+const TAGS_SHEET_NAME = 'Data Validation'; // New sheet for dynamic tags
 
 // --- Token Expiration (in minutes) ---
 const TOKEN_EXPIRATION_MINUTES = 15;
+
+// --- Gemini API Configuration ---
+// IMPORTANT: You must set your Gemini API key in the script's properties.
+// 1. Go to Project Settings (gear icon).
+// 2. Scroll to "Script Properties" and click "Add script property".
+// 3. Set the Property name to "API_KEY" and the Value to your key.
+const API_KEY = PropertiesService.getScriptProperties().getProperty('API_KEY');
 
 
 // =================================================================
 // UTILITY FUNCTIONS
 // =================================================================
+
+/**
+ * Calls the Gemini API to generate content based on a prompt.
+ * @param {string} prompt The text prompt to send to the model.
+ * @return {string} The text response from the model.
+ */
+function callGeminiApi(prompt) {
+  if (!API_KEY) {
+    throw new Error("Gemini API key is not set. Please configure it in the script properties.");
+  }
+  
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`;
+  
+  const payload = {
+    contents: [{
+      parts: [{
+        text: prompt
+      }]
+    }]
+  };
+  
+  const options = {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true // Prevents script from halting on API errors
+  };
+
+  const response = UrlFetchApp.fetch(url, options);
+  const responseCode = response.getResponseCode();
+  const responseBody = response.getContentText();
+
+  if (responseCode === 200) {
+    const jsonResponse = JSON.parse(responseBody);
+    // Safely access the text from the response
+    const text = jsonResponse.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (text) {
+      return text;
+    } else {
+      Logger.log(`Gemini response missing text content. Full Response: ${responseBody}`);
+      throw new Error("Failed to extract summary from Gemini's response.");
+    }
+  } else {
+    Logger.log(`Gemini API Error (Code: ${responseCode}): ${responseBody}`);
+    throw new Error(`Gemini API request failed with status ${responseCode}. Check the logs for details.`);
+  }
+}
 
 /**
  * Creates a JSON response object for the web app.
@@ -30,55 +85,56 @@ function createJsonResponse(data) {
 
 
 /**
- * Normalizes a date value from a sheet cell (can be a Date object or various string formats)
- * into a consistent 'yyyy-MM-dd' string, using the spreadsheet's timezone.
+ * Normalizes a date value from a sheet cell into a 'yyyy-MM-dd' string,
+ * correctly handling timezone conversions to prevent day-shifting bugs.
  * @param {Date|string|number} dateValue The value from the spreadsheet cell.
  * @param {string} timezone The timezone of the spreadsheet.
  * @return {string|null} The formatted date string or null if invalid.
  */
 function normalizeDateString(dateValue, timezone) {
-  if (!dateValue) return null;
+  if (!dateValue || dateValue === '') return null;
 
-  // If it's already a valid Date object
+  // Case 1: The value is already a JavaScript Date object. This is the ideal case.
   if (dateValue instanceof Date) {
-    try {
-      return Utilities.formatDate(dateValue, timezone, 'yyyy-MM-dd');
-    } catch(e) {
-      Logger.log(`Error formatting a valid Date object: ${dateValue}. Error: ${e.message}`);
-      return null;
+    return Utilities.formatDate(dateValue, timezone, 'yyyy-MM-dd');
+  }
+
+  // Case 2: The value is a string. This requires careful parsing.
+  if (typeof dateValue === 'string') {
+    const trimmedDate = dateValue.trim();
+    
+    // Check for ISO 8601 format (YYYY-MM-DD), which JS parses as UTC.
+    // We must manually adjust it to treat it as a local date in the script's timezone.
+    const isoMatch = trimmedDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+      const year = parseInt(isoMatch[1], 10);
+      const month = parseInt(isoMatch[2], 10) - 1; // Month is 0-indexed
+      const day = parseInt(isoMatch[3], 10);
+      // Constructing the date from parts ensures it's interpreted in the script's local timezone, not UTC.
+      const localDate = new Date(year, month, day);
+      return Utilities.formatDate(localDate, timezone, 'yyyy-MM-dd');
     }
   }
 
-  // If it's a string or number, try to parse it
-  if (typeof dateValue === 'string' || typeof dateValue === 'number') {
-    try {
-      // Create a date object from the string/number. `new Date()` is flexible.
-      const parsedDate = new Date(dateValue);
-      
-      // Check if the parsed date is valid. An invalid date will have a time of NaN.
-      if (isNaN(parsedDate.getTime())) {
-        Logger.log(`Could not parse date value: "${dateValue}" into a valid date.`);
-        return null;
-      }
-      
-      // If valid, format it using the spreadsheet's timezone.
-      return Utilities.formatDate(parsedDate, timezone, 'yyyy-MM-dd');
-
-    } catch (e) {
-      Logger.log(`Exception while parsing date value "${dateValue}": ${e.message}`);
+  // Case 3: Fallback for other string formats (e.g., 'Jul 26, 2024') or numbers (Sheet serial dates).
+  // new Date() can handle these, but we proceed with caution.
+  try {
+    const parsedDate = new Date(dateValue);
+    // Check if parsing resulted in a valid date.
+    if (isNaN(parsedDate.getTime())) {
+      Logger.log(`Could not parse date value: "${dateValue}" into a valid date.`);
       return null;
     }
+    return Utilities.formatDate(parsedDate, timezone, 'yyyy-MM-dd');
+  } catch (e) {
+    Logger.log(`Exception while parsing date value "${dateValue}": ${e.message}`);
+    return null;
   }
-  
-  // If it's some other type, we can't handle it.
-  Logger.log(`Unhandled date type for value: ${dateValue}`);
-  return null;
 }
 
 
 // =================================================================
 // MAIN ENDPOINT - doPost
-// This function is the single entry point for all requests from the web app.
 // =================================================================
 
 function doPost(e) {
@@ -105,6 +161,15 @@ function doPost(e) {
       case 'submitRatings':
         responseData = handleSubmitRatings(payload);
         break;
+      case 'getLeaderboardData':
+        responseData = handleGetLeaderboardData(payload);
+        break;
+      case 'getFeedbackTags':
+        responseData = handleGetFeedbackTags();
+        break;
+      case 'getFeedbackSummary': // New action for Gemini
+        responseData = handleGetFeedbackSummary(payload);
+        break;
       case 'debugDateParsing':
         responseData = handleDebugDateParsing();
         break;
@@ -124,8 +189,170 @@ function doPost(e) {
 // =================================================================
 
 /**
+ * Gets all comments for a specific performer for today, sends them to Gemini for summarization.
+ */
+function handleGetFeedbackSummary(payload) {
+  const { performerId, venueName } = payload;
+  if (!performerId || !venueName) throw new Error("performerId and venueName are required for summary.");
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(RATINGS_SHEET_NAME);
+
+  if (!sheet || sheet.getLastRow() < 2) {
+    return { summary: "No ratings data found." };
+  }
+
+  const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const spreadsheetTimezone = ss.getSpreadsheetTimeZone();
+  const todayString = Utilities.formatDate(new Date(), spreadsheetTimezone, 'yyyy-MM-dd');
+
+  const comments = [];
+  data.forEach(row => {
+    const timestampString = normalizeDateString(row[0], spreadsheetTimezone);
+    const currentVenueName = row[4];
+    const currentPerformerId = row[5];
+    const comment = row[11]; // Column L is Comments
+
+    if (timestampString === todayString && currentVenueName === venueName && currentPerformerId.toString() === performerId.toString() && comment && comment.trim() !== '') {
+      comments.push(comment.trim());
+    }
+  });
+
+  if (comments.length < 2) {
+    return { summary: "Not enough comments available to generate a meaningful summary." };
+  }
+  
+  const prompt = `Please summarize the following feedback comments for a music performer. Generate a concise, bulleted list highlighting the key positive themes and areas for improvement. The summary should be constructive and helpful for the artist.
+
+Comments:
+- "${comments.join('"\n- "')}"
+
+Summary:`;
+
+  const summary = callGeminiApi(prompt);
+  return { summary };
+}
+
+/**
+ * Fetches feedback tags and their types from the 'Data Validation' sheet.
+ */
+function handleGetFeedbackTags() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TAGS_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) {
+    return { positive: [], constructive: [] };
+  }
+  
+  const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+  
+  const positive = [];
+  const constructive = [];
+
+  data.forEach(row => {
+    const tag = row[0];
+    const type = row[1];
+    if (tag && type) {
+      if (type.toLowerCase() === 'positive') {
+        positive.push(tag);
+      } else if (type.toLowerCase() === 'constructive') {
+        constructive.push(tag);
+      }
+    }
+  });
+
+  return { positive, constructive };
+}
+
+
+/**
+ * Calculates and returns the top-rated performers for a specific venue for today.
+ * Now also includes a count of comments, bio, and social link for each performer.
+ */
+function handleGetLeaderboardData(payload) {
+  const { venueName } = payload;
+  if (!venueName) throw new Error("venueName is required for leaderboard data.");
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const spreadsheetTimezone = ss.getSpreadsheetTimeZone();
+  const todayString = Utilities.formatDate(new Date(), spreadsheetTimezone, 'yyyy-MM-dd');
+
+  // Step 1: Create a map of performer info for today's venue
+  const performersSheet = ss.getSheetByName(PERFORMERS_SHEET_NAME);
+  const performerInfoMap = {};
+  if (performersSheet && performersSheet.getLastRow() > 1) {
+    const performerValues = performersSheet.getRange(2, 1, performersSheet.getLastRow() - 1, 6).getValues(); // Get up to column F (social link)
+    performerValues.forEach(row => {
+      const id = row[0];
+      const venue = row[2];
+      const dateValue = row[3];
+      const dateString = normalizeDateString(dateValue, spreadsheetTimezone);
+      if (id && venue === venueName && dateString === todayString) {
+        performerInfoMap[id.toString()] = {
+          bio: row[4] || '',
+          socialLink: row[5] || ''
+        };
+      }
+    });
+  }
+
+  // Step 2: Process ratings
+  const ratingsSheet = ss.getSheetByName(RATINGS_SHEET_NAME);
+  if (!ratingsSheet || ratingsSheet.getLastRow() < 2) {
+    return { leaderboard: [] };
+  }
+  const ratingsData = ratingsSheet.getRange(2, 1, ratingsSheet.getLastRow() - 1, ratingsSheet.getLastColumn()).getValues();
+  
+  const ratingsByPerformer = {};
+  ratingsData.forEach(row => {
+    const timestampString = normalizeDateString(row[0], spreadsheetTimezone);
+    const currentVenueName = row[4];
+    
+    if (timestampString === todayString && currentVenueName === venueName) {
+      const performerId = row[5].toString();
+      const performerName = row[6];
+      const ratingValue = parseFloat(row[7]);
+      const comment = row[11] || '';
+
+      if (!ratingsByPerformer[performerId]) {
+        const info = performerInfoMap[performerId] || { bio: '', socialLink: '' }; // Fallback
+        ratingsByPerformer[performerId] = {
+          id: performerId,
+          name: performerName,
+          totalRating: 0,
+          ratingCount: 0,
+          commentCount: 0,
+          bio: info.bio,
+          socialLink: info.socialLink
+        };
+      }
+      
+      if (!isNaN(ratingValue)) {
+        ratingsByPerformer[performerId].totalRating += ratingValue;
+        ratingsByPerformer[performerId].ratingCount += 1;
+      }
+      if (comment.trim() !== '') {
+        ratingsByPerformer[performerId].commentCount += 1;
+      }
+    }
+  });
+
+  const leaderboard = Object.values(ratingsByPerformer).map(p => ({
+    ...p,
+    averageRating: p.ratingCount > 0 ? (p.totalRating / p.ratingCount) : 0,
+  }));
+  
+  leaderboard.sort((a, b) => {
+    if (b.averageRating !== a.averageRating) {
+      return b.averageRating - a.averageRating;
+    }
+    return b.ratingCount - a.ratingCount;
+  });
+
+  return { leaderboard: leaderboard.slice(0, 3) };
+}
+
+
+/**
  * Finds all unique venues with performances scheduled for today.
- * Uses a robust date normalization function to handle various date formats.
  */
 function handleGetVenuesForToday() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(PERFORMERS_SHEET_NAME);
@@ -135,31 +362,24 @@ function handleGetVenuesForToday() {
   
   const spreadsheetTimezone = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
   const todayString = Utilities.formatDate(new Date(), spreadsheetTimezone, 'yyyy-MM-dd');
-  Logger.log(`Searching for venues for date: ${todayString} in timezone: ${spreadsheetTimezone}`);
   
   const venues = new Set();
   data.forEach((row, index) => {
     const venueName = row[2];
     const performanceDateValue = row[3];
-    
     const performanceDateString = normalizeDateString(performanceDateValue, spreadsheetTimezone);
-
-    Logger.log(`Row ${index + 2}: Venue="${venueName}", OriginalDate="${performanceDateValue}", NormalizedDate="${performanceDateString}"`);
 
     if (venueName && performanceDateString && performanceDateString === todayString) {
       venues.add(venueName);
-      Logger.log(`  -> Match found! Added venue: ${venueName}`);
     }
   });
 
-  Logger.log(`Found ${venues.size} venues for today: ${Array.from(venues).join(', ')}`);
   return { venues: Array.from(venues) };
 }
 
 
 /**
  * Gets all performers for a specific venue for today.
- * Uses a robust date normalization function to handle various date formats.
  */
 function handleGetPerformers(payload) {
     if (!payload.venueName) throw new Error("venueName is required.");
@@ -167,23 +387,22 @@ function handleGetPerformers(payload) {
     const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(PERFORMERS_SHEET_NAME);
     if (!sheet) throw new Error(`Sheet "${PERFORMERS_SHEET_NAME}" not found.`);
 
-    const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+    if (sheet.getLastRow() < 2) {
+      return { performers: [] };
+    }
 
+    const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
     const spreadsheetTimezone = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
     const todayString = Utilities.formatDate(new Date(), spreadsheetTimezone, 'yyyy-MM-dd');
-    Logger.log(`Searching for performers at "${payload.venueName}" for date: ${todayString}`);
 
     const performers = data.filter(row => {
         const venueName = row[2];
         const performanceDateValue = row[3];
-
         if (!venueName || venueName.trim() !== payload.venueName.trim()) {
             return false;
         }
-
         const performanceDateString = normalizeDateString(performanceDateValue, spreadsheetTimezone);
         return performanceDateString === todayString;
-
     }).map(row => ({
         id: row[0],
         name: row[1],
@@ -192,7 +411,6 @@ function handleGetPerformers(payload) {
         setTime: row[6] || ''
     }));
     
-    Logger.log(`Found ${performers.length} performers for "${payload.venueName}" today.`);
     return { performers };
 }
 
@@ -212,7 +430,6 @@ function handleRequestLogin(payload) {
   const token = Utilities.getUuid();
   const expiry = new Date(new Date().getTime() + TOKEN_EXPIRATION_MINUTES * 60 * 1000);
   
-  // Upsert rater info
   const data = sheet.getDataRange().getValues();
   let raterRow = -1;
   for (let i = 1; i < data.length; i++) {
@@ -228,9 +445,14 @@ function handleRequestLogin(payload) {
     sheet.appendRow([email, firstName, lastName, venueName, token, expiry]);
   }
   
-  // Send Email
   const loginUrl = `${WEB_APP_URL}?token=${token}`;
-  const subject = `Your Secure Login Link for the Performer Rating App`;
+  
+  const today = new Date();
+  const spreadsheetTimezone = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+  const formattedDate = Utilities.formatDate(today, spreadsheetTimezone, 'dd MMM');
+  
+  const subject = `[${formattedDate}] ${firstName}, Your Secure Login Link To Rate Performers At ${venueName}`;
+  
   const body = `
     <html>
       <body>
@@ -244,6 +466,7 @@ function handleRequestLogin(payload) {
   
   MailApp.sendEmail({
     to: email,
+    from: 'team@ukmusiciansnetwork.com',
     subject: subject,
     htmlBody: body,
   });
@@ -275,7 +498,6 @@ function handleVerifyToken(payload) {
           lastName: data[i][2],
           venue: data[i][3],
         };
-        // Invalidate token after use
         sheet.getRange(i + 1, 5, 1, 2).setValues([["", ""]]);
       }
       break;
@@ -296,22 +518,23 @@ function handleGetTodaysRatings(payload) {
     const { raterEmail, venueName } = payload;
     if (!raterEmail || !venueName) throw new Error("raterEmail and venueName are required.");
 
-    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RATINGS_SHEET_NAME);
-    if (!sheet) throw new Error(`Sheet "${RATINGS_SHEET_NAME}" not found.`);
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(RATINGS_SHEET_NAME);
+    
+    if (!sheet || sheet.getLastRow() < 2) {
+      return { ratings: {} };
+    }
 
     const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
-
-    const spreadsheetTimezone = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
+    const spreadsheetTimezone = ss.getSpreadsheetTimeZone();
     const todayString = Utilities.formatDate(new Date(), spreadsheetTimezone, 'yyyy-MM-dd');
     
     const ratings = {};
     data.forEach(row => {
-        const timestampValue = row[0];
+        const timestampString = normalizeDateString(row[0], spreadsheetTimezone);
         const currentRaterEmail = row[1];
         const currentVenueName = row[4];
         
-        const timestampString = normalizeDateString(timestampValue, spreadsheetTimezone);
-
         if (timestampString === todayString && currentRaterEmail === raterEmail && currentVenueName === venueName) {
             const performerId = row[5];
             const ratingValue = row[7];
@@ -332,12 +555,21 @@ function handleSubmitRatings(payload) {
     throw new Error("Missing required fields for submitting ratings.");
   }
   
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RATINGS_SHEET_NAME);
-  if (!sheet) throw new Error(`Sheet "${RATINGS_SHEET_NAME}" not found.`);
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ratingsSheet = ss.getSheetByName(RATINGS_SHEET_NAME);
+  if (!ratingsSheet) throw new Error(`Sheet "${RATINGS_SHEET_NAME}" not found.`);
+
+  const performersSheet = ss.getSheetByName(PERFORMERS_SHEET_NAME);
+  const performerData = performersSheet.getRange(2, 1, performersSheet.getLastRow() - 1, 2).getValues();
+  const performerNameMap = performerData.reduce((map, row) => {
+    map[row[0]] = row[1];
+    return map;
+  }, {});
 
   const timestamp = new Date();
   
   const rowsToAdd = ratings.map(rating => {
+    const performerName = performerNameMap[rating.id] || 'Performer Not Found';
     return [
       timestamp,
       raterEmail,
@@ -345,16 +577,17 @@ function handleSubmitRatings(payload) {
       lastName,
       venueName,
       rating.id,
-      rating.name,
+      performerName,
       rating.rating,
       (rating.feedbackTags || []).join(', '),
       latitude || '',
       longitude || '',
+      rating.comment || ''
     ];
   });
   
   if (rowsToAdd.length > 0) {
-      sheet.getRange(sheet.getLastRow() + 1, 1, rowsToAdd.length, rowsToAdd[0].length).setValues(rowsToAdd);
+      ratingsSheet.getRange(ratingsSheet.getLastRow() + 1, 1, rowsToAdd.length, rowsToAdd[0].length).setValues(rowsToAdd);
   }
 
   return { message: 'Ratings submitted successfully.' };
@@ -370,7 +603,6 @@ function handleDebugDateParsing() {
   const spreadsheetTimezone = SpreadsheetApp.getActiveSpreadsheet().getSpreadsheetTimeZone();
   const todayString = Utilities.formatDate(new Date(), spreadsheetTimezone, 'yyyy-MM-dd');
   
-  // Read up to 15 data rows (plus header)
   const numRowsToFetch = Math.min(sheet.getLastRow(), 16);
   if (numRowsToFetch < 2) {
     return { 
@@ -380,7 +612,7 @@ function handleDebugDateParsing() {
     };
   }
 
-  const data = sheet.getRange(2, 4, numRowsToFetch - 1, 1).getValues(); // Column D is Performance Date
+  const data = sheet.getRange(2, 4, numRowsToFetch - 1, 1).getValues();
   
   const debugData = data.map((row, index) => {
     const dateValue = row[0];

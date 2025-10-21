@@ -1,4 +1,3 @@
-
 export interface Performer {
   id: string;
   name: string;
@@ -9,7 +8,17 @@ export interface Performer {
 
 export interface Rating {
   id:string;
-  name:string;
   rating: number;
   feedbackTags?: string[];
+  comment?: string;
+}
+
+export interface LeaderboardEntry {
+  id: string;
+  name: string;
+  averageRating: number;
+  ratingCount: number;
+  commentCount: number;
+  bio?: string;
+  socialLink?: string;
 }
