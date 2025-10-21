@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import Button from './Button';
-import { requestLoginLink, getVenuesForToday, runDiagnostics } from '../services/performerService';
+import Button from './Button.tsx';
+import { requestLoginLink, getVenuesForToday, runDiagnostics } from '../services/performerService.ts';
 
 interface LoginScreenProps {
   initialError?: string | null;

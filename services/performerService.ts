@@ -1,4 +1,4 @@
-import type { Performer, Rating, LeaderboardEntry } from '../types';
+import type { Performer, Rating, LeaderboardEntry } from '../types.ts';
 
 // The URL for the deployed Google Apps Script. This is the single endpoint for all backend operations.
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwVzj7Czo4ae1mWFIs2FFkCfF1kyO-5IwJUkT2g4RQiUCgiRO0nOA64k9ysOex6CFjI/exec';
@@ -63,8 +63,9 @@ const postToWebApp = async (payload: object) => {
 
 export const getFeedbackSummary = async (performerId: string, venueName: string): Promise<string> => {
     const result = await postToWebApp({ action: 'getFeedbackSummary', performerId, venueName });
-    if (typeof result.summary !== 'string') {
-        throw new Error("Summary data not found in the script's response.");
+    // Check if summary is a non-empty string.
+    if (!result.summary || typeof result.summary !== 'string' || result.summary.trim() === '') {
+        throw new Error("The AI returned an empty summary. This can happen if the comments are too short or lack specific feedback.");
     }
     return result.summary;
 }

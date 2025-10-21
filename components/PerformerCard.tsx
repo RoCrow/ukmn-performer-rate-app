@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
-import type { Performer } from '../types';
-import StarRating from './StarRating';
-import FeedbackTagger from './FeedbackTagger';
-import { getFeedbackSummary } from '../services/performerService';
+
+import React, { useState, Fragment } from 'react';
+import type { Performer } from '../types.ts';
+import StarRating from './StarRating.tsx';
+import FeedbackTagger from './FeedbackTagger.tsx';
+import { getFeedbackSummary } from '../services/performerService.ts';
+import HypeMeter from './HypeMeter.tsx';
 
 interface PerformerCardProps {
   performer: Performer;
@@ -34,29 +36,11 @@ const ExternalLinkIcon: React.FC<{className?: string}> = ({className}) => (
     </svg>
 );
 
-const HypeMeter: React.FC<{count: number, maxCount: number}> = ({ count, maxCount }) => {
-    const widthPercentage = maxCount > 0 ? Math.min(100, (count / maxCount) * 100) : 0;
-    
-    if (count === 0) {
-        return null;
-    }
-
-    return (
-        <div className="w-full mt-3">
-            <div className="flex justify-between items-center text-xs text-gray-400 mb-1">
-                <span>Hype Meter</span>
-                <span>{count} Rating{count !== 1 ? 's' : ''}</span>
-            </div>
-            <div className="w-full bg-gray-700 rounded-full h-1.5">
-                <div 
-                    className="bg-brand-primary h-1.5 rounded-full transition-all duration-500"
-                    style={{width: `${widthPercentage}%`}}
-                    title={`${count} ratings received`}
-                ></div>
-            </div>
-        </div>
-    );
-}
+const ChevronDownIcon: React.FC<{className?: string}> = ({className}) => (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+    </svg>
+);
 
 const PerformerCard: React.FC<PerformerCardProps> = ({ 
     performer, 
@@ -76,6 +60,7 @@ const PerformerCard: React.FC<PerformerCardProps> = ({
 }) => {
   const [isBioVisible, setIsBioVisible] = useState(false);
   const [summary, setSummary] = useState<string | null>(null);
+  const [isSummaryVisible, setIsSummaryVisible] = useState<boolean>(false);
   const [isSummaryLoading, setIsSummaryLoading] = useState<boolean>(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
 
@@ -86,6 +71,7 @@ const PerformerCard: React.FC<PerformerCardProps> = ({
     try {
         const result = await getFeedbackSummary(performer.id, venueName);
         setSummary(result);
+        setIsSummaryVisible(true); // Show summary on successful fetch
     } catch(err) {
         const message = err instanceof Error ? err.message : "An unknown error occurred.";
         setSummaryError(`Could not generate summary: ${message}`);
@@ -93,6 +79,19 @@ const PerformerCard: React.FC<PerformerCardProps> = ({
         setIsSummaryLoading(false);
     }
   };
+  
+  const handleSummaryToggle = () => {
+    // If we have a summary, just toggle visibility
+    if (summary) {
+      setIsSummaryVisible(!isSummaryVisible);
+    } 
+    // Otherwise, if not loading and can analyze, fetch it
+    else if (!isSummaryLoading && canAnalyze) {
+      handleAnalyzeFeedback();
+    }
+ };
+
+  const canAnalyze = commentCount > 1;
 
   return (
     <div className={`
@@ -100,43 +99,51 @@ const PerformerCard: React.FC<PerformerCardProps> = ({
       border border-gray-700 shadow-md transition-all duration-300 
       ${isRated ? 'opacity-60' : 'hover:shadow-lg hover:border-brand-primary/50'}
     `}>
-        <div className="w-full flex flex-col sm:flex-row justify-between items-start gap-4">
-            <div className="flex-grow text-center sm:text-left">
-                <h3 className="text-xl font-bold text-white">{performer.name}</h3>
-                 {(performer.bio || performer.socialLink) && (
-                    <div className="mt-2 text-sm">
-                        {performer.bio && (
-                            <>
-                                <button 
-                                    onClick={() => setIsBioVisible(!isBioVisible)}
-                                    className="text-gray-400 hover:text-white transition-colors"
-                                    aria-expanded={isBioVisible}
+        <div className="w-full flex flex-col gap-3">
+            {/* Top part with name and stars */}
+            <div className="flex flex-col sm:flex-row justify-between items-center sm:items-start gap-4">
+                <div className="flex-grow text-center sm:text-left">
+                    <h3 className="text-xl font-bold text-white">{performer.name}</h3>
+                    {(performer.bio || performer.socialLink) && (
+                        <div className="mt-4 text-sm">
+                            {performer.bio && (
+                                <>
+                                    <button 
+                                        onClick={() => setIsBioVisible(!isBioVisible)}
+                                        className="text-gray-400 hover:text-white transition-colors"
+                                        aria-expanded={isBioVisible}
+                                    >
+                                        {isBioVisible ? 'Hide Bio' : 'Show Bio'}
+                                    </button>
+                                    {performer.socialLink && <span className="text-gray-600 mx-2">|</span>}
+                                </>
+                            )}
+                            {performer.socialLink && (
+                                <a 
+                                    href={performer.socialLink} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 hover:underline"
                                 >
-                                    {isBioVisible ? 'Hide Bio' : 'Show Bio'}
-                                </button>
-                                {performer.socialLink && <span className="text-gray-600 mx-2">|</span>}
-                            </>
-                        )}
-                        {performer.socialLink && (
-                            <a 
-                                href={performer.socialLink} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 text-brand-primary hover:underline"
-                            >
-                                Socials <ExternalLinkIcon />
-                            </a>
-                        )}
-                    </div>
-                )}
+                                    Socials <ExternalLinkIcon />
+                                </a>
+                            )}
+                        </div>
+                    )}
+                </div>
+                <div className="flex-shrink-0">
+                    <StarRating
+                    count={5}
+                    rating={rating}
+                    onRate={onRatingChange}
+                    disabled={isRated}
+                    />
+                </div>
             </div>
-            <div className="flex-shrink-0 mt-2 sm:mt-0">
-                <StarRating
-                count={5}
-                rating={rating}
-                onRate={onRatingChange}
-                disabled={isRated}
-                />
+            
+            {/* Hype Meter below, taking full width */}
+            <div className="w-full">
+                <HypeMeter count={ratingCount} maxCount={maxRatingCount} />
             </div>
         </div>
         
@@ -169,27 +176,31 @@ const PerformerCard: React.FC<PerformerCardProps> = ({
                 </div>
             )}
             
-            <div className="w-full mt-4">
-                 <HypeMeter count={ratingCount} maxCount={maxRatingCount} />
-            </div>
-
-            {commentCount > 1 && (
+            {(ratingCount > 0 || commentCount > 0) && (
                 <div className="w-full pt-4 mt-4 border-t border-gray-700">
                     <button
-                        onClick={handleAnalyzeFeedback}
-                        disabled={isSummaryLoading}
-                        className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold bg-gray-700/80 text-brand-accent rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-wait transition-colors"
+                        onClick={handleSummaryToggle}
+                        disabled={isSummaryLoading || !canAnalyze}
+                        title={!canAnalyze ? 'At least two comments are required to generate an AI summary.' : 'Generate an AI-powered summary of feedback'}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold bg-gray-700/80 text-brand-accent rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                     >
                         {isSummaryLoading ? (
-                            <>
+                            <Fragment>
                                 <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-brand-accent"></div>
                                 Analyzing...
-                            </>
+                            </Fragment>
+                        ) : !canAnalyze ? (
+                            commentCount === 1 ? '1 more comment needed to analyze' : 'Waiting for comments to analyze'
+                        ) : summary ? (
+                            <Fragment>
+                                {isSummaryVisible ? 'Hide Summary' : 'Show Summary'}
+                                <ChevronDownIcon className={`w-5 h-5 transition-transform ${isSummaryVisible ? 'rotate-180' : ''}`} />
+                            </Fragment>
                         ) : (
-                            <>
+                            <Fragment>
                                 <WandIcon className="w-4 h-4" />
-                                Analyze Feedback ({commentCount} comments)
-                            </>
+                                Feedback Summary ({commentCount} comments)
+                            </Fragment>
                         )}
                     </button>
                     
@@ -197,7 +208,7 @@ const PerformerCard: React.FC<PerformerCardProps> = ({
                         <p className="mt-3 text-center text-sm text-red-400 bg-red-900/30 p-2 rounded-md">{summaryError}</p>
                     )}
 
-                    {summary && (
+                    {isSummaryVisible && summary && (
                         <div className="mt-4 p-4 bg-gray-900/50 rounded-lg animate-fade-in">
                             <h4 className="font-bold text-brand-accent mb-2">AI-Powered Feedback Summary</h4>
                             <div className="text-gray-300 text-sm whitespace-pre-wrap space-y-2">{summary}</div>

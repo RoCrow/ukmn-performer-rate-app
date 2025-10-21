@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import type { Performer, Rating, LeaderboardEntry } from './types';
-import { getPerformers, submitRatings, loginWithToken, getTodaysRatings, getLeaderboardData, getFeedbackTags } from './services/performerService';
-import Header from './components/Header';
-import PerformerCard from './components/PerformerCard';
-import Button from './components/Button';
-import LoginScreen from './components/LoginScreen';
-import Leaderboard from './components/Leaderboard';
+import type { Performer, Rating, LeaderboardEntry } from './types.ts';
+import { getPerformers, submitRatings, loginWithToken, getTodaysRatings, getLeaderboardData, getFeedbackTags } from './services/performerService.ts';
+import Header from './components/Header.tsx';
+import PerformerCard from './components/PerformerCard.tsx';
+import Button from './components/Button.tsx';
+import LoginScreen from './components/LoginScreen.tsx';
+import Leaderboard from './components/Leaderboard.tsx';
 
 type AuthState = 'LOGGED_OUT' | 'CHECKING_TOKEN' | 'LOGGED_IN' | 'TOKEN_ERROR';
 type SubmissionStatus = 'IDLE' | 'AWAITING_CONSENT' | 'GETTING_LOCATION' | 'SUBMITTING';
@@ -28,7 +28,7 @@ const App: React.FC = () => {
   const [authState, setAuthState] = useState<AuthState>('LOGGED_OUT');
   const [tokenError, setTokenError] = useState<string | null>(null);
   
-  const [leaderboardData, setLeaderboardData] = useState<LeaderboardEntry[]>([]);
+  const [leaderboardData, setLeaderboardData] = useState<Record<string, LeaderboardEntry>>({});
   const [isLeaderboardLoading, setIsLeaderboardLoading] = useState<boolean>(true);
   
   const [feedbackTags, setFeedbackTags] = useState<{positive: string[], constructive: string[]}>({ positive: [], constructive: [] });
@@ -131,7 +131,13 @@ const App: React.FC = () => {
 
       setPerformers(performersData);
       setExistingRatings(existingRatingsData);
-      setLeaderboardData(leaderboardResult);
+      
+      const leaderboardMap = leaderboardResult.reduce((acc, entry) => {
+        acc[entry.id] = entry;
+        return acc;
+      }, {} as Record<string, LeaderboardEntry>);
+      setLeaderboardData(leaderboardMap);
+
       setFeedbackTags(tagsData);
 
     } catch (err) {
@@ -210,7 +216,14 @@ const App: React.FC = () => {
       setIsSubmitted(true);
       
       // Re-fetch leaderboard data to show immediate impact
-      getLeaderboardData(venueName).then(setLeaderboardData).catch(err => console.error("Failed to refresh leaderboard", err));
+      getLeaderboardData(venueName).then(leaderboardResult => {
+          const leaderboardMap = leaderboardResult.reduce((acc, entry) => {
+            acc[entry.id] = entry;
+            return acc;
+          }, {} as Record<string, LeaderboardEntry>);
+          setLeaderboardData(leaderboardMap);
+      }).catch(err => console.error("Failed to refresh leaderboard", err));
+
 
       setTimeout(() => setIsSubmitted(false), 4000);
     } catch (err) {
@@ -320,6 +333,13 @@ const App: React.FC = () => {
           default: return 'Submit All Ratings';
       }
   }
+  
+  const leaderboardValues = Object.values(leaderboardData);
+  const sortedLeaderboard = leaderboardValues.sort((a, b) => {
+      if (b.averageRating !== a.averageRating) return b.averageRating - a.averageRating;
+      return b.ratingCount - a.ratingCount;
+  });
+  const maxRatingCount = leaderboardValues.reduce((max, p) => Math.max(max, p.ratingCount), 0);
 
   const renderContent = () => {
     if (error) {
@@ -347,9 +367,6 @@ const App: React.FC = () => {
             </div>
         )
     }
-    
-    // Find the maximum rating count for the hype meter scaling
-    const maxRatingCount = leaderboardData.reduce((max, p) => Math.max(max, p.ratingCount), 0);
 
     return (
       <div className="space-y-4">
@@ -358,7 +375,7 @@ const App: React.FC = () => {
            const currentRating = existingRatings[performer.id] || ratings[performer.id]?.score || 0;
            const currentTags = ratings[performer.id]?.tags || [];
            const currentComment = ratings[performer.id]?.comment || '';
-           const leaderboardInfo = leaderboardData.find(p => p.id === performer.id);
+           const leaderboardInfo = leaderboardData[performer.id];
            
            return (
               <div key={performer.id} className="animate-slide-in-bottom" style={{ animationDelay: `${index * 100}ms`}}>
@@ -371,8 +388,8 @@ const App: React.FC = () => {
                   onFeedbackChange={(tags) => handleFeedbackChange(performer.id, tags)}
                   comment={currentComment}
                   onCommentChange={(comment) => handleCommentChange(performer.id, comment)}
-                  ratingCount={leaderboardInfo?.ratingCount || 0}
-                  commentCount={leaderboardInfo?.commentCount || 0}
+                  ratingCount={leaderboardInfo?.ratingCount ?? 0}
+                  commentCount={leaderboardInfo?.commentCount ?? 0}
                   maxRatingCount={maxRatingCount}
                   positiveTags={feedbackTags.positive}
                   constructiveTags={feedbackTags.constructive}
@@ -390,8 +407,29 @@ const App: React.FC = () => {
       <div className="max-w-7xl mx-auto">
         <Header venueName={venueName} userName={firstName && lastName ? `${firstName} ${lastName}` : null} onChangeDetails={handleChangeDetails} />
         <main className="mt-12">
-          { authState === 'LOGGED_IN' && <Leaderboard data={leaderboardData} isLoading={isLeaderboardLoading} /> }
+
+          {/* Leaderboard Section */}
+          { authState === 'LOGGED_IN' && (
+            <>
+              <div className="border-t border-gray-700"></div>
+              <div className="mt-8">
+                <Leaderboard data={sortedLeaderboard} isLoading={isLeaderboardLoading} maxRatingCount={maxRatingCount} venueName={venueName || ''} />
+              </div>
+            </>
+          )}
+
+          {/* Performer List Section */}
+          {!isLoading && !error && !isSubmitted && performers.length > 0 && (
+            <>
+              <div className="border-t border-gray-700"></div>
+              <h2 className="text-2xl sm:text-3xl font-bold text-center mt-8 mb-6 text-white">
+                All of Tonight's <span className="text-brand-primary">Performers</span>
+              </h2>
+            </>
+          )}
+          
           {renderContent()}
+
           {!isLoading && !error && !isSubmitted && performers.length > 0 && (
             <footer className="mt-12 text-center animate-fade-in">
               <p className="mb-4 text-gray-400">{ratedCount} of {totalPerformers - Object.keys(existingRatings).length} new performers rated.</p>
@@ -400,6 +438,7 @@ const App: React.FC = () => {
               </Button>
               {submissionError && (
                 <p className="mt-4 text-red-400 bg-red-900/20 p-3 rounded-lg">{submissionError}</p>
+
               )}
             </footer>
           )}
