@@ -1078,6 +1078,9 @@ function handleSubmitRatings(payload) {
   if (!ratingsSheet) throw new Error(`Sheet "${RATINGS_SHEET_NAME}" not found.`);
 
   const timestamp = new Date();
+  const spreadsheetTimezone = ss.getSpreadsheetTimeZone();
+  const formattedTimestamp = Utilities.formatDate(timestamp, spreadsheetTimezone, 'yyyy-MM-dd HH:mm:ss');
+
 
   // Part 1: Log ratings & calculate SP earned in this submission
   const performersSheet = ss.getSheetByName(PERFORMERS_SHEET_NAME);
@@ -1151,7 +1154,7 @@ function handleSubmitRatings(payload) {
             currentSP + spEarnedThisSubmission,
             currentRatings + ratings.length,
             currentComments + commentsWrittenThisSubmission,
-            timestamp
+            formattedTimestamp
         ]]);
     } else {
         // New rater, append their stats
@@ -1161,7 +1164,7 @@ function handleSubmitRatings(payload) {
             spEarnedThisSubmission,
             ratings.length,
             commentsWrittenThisSubmission,
-            timestamp
+            formattedTimestamp
         ]);
     }
 
