@@ -103,12 +103,14 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email.trim() || !venue.trim() || !firstName.trim() || !lastName.trim()) {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!normalizedEmail || !venue.trim() || !firstName.trim() || !lastName.trim()) {
       setError('All fields are required.');
       setLoginState('ERROR');
       return;
     }
-    if (!/\S+@\S+\.\S+/.test(email)) {
+    if (!/\S+@\S+\.\S+/.test(normalizedEmail)) {
       setError('Please enter a valid email address.');
       setLoginState('ERROR');
       return;
@@ -130,14 +132,14 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
     if (TEMPORARY_BYPASS_ENABLED || (isChangingDetails && onDetailsChanged)) {
         // Path 1: Bypass email (for testing or when changing details)
         if (onDetailsChanged) {
-            onDetailsChanged({ email, venue, firstName, lastName });
+            onDetailsChanged({ email: normalizedEmail, venue, firstName, lastName });
         }
         return;
     } else {
         // Path 2: Original magic link flow for new logins
         setLoginState('SENDING');
         try {
-            await requestLoginLink(email, venue, firstName, lastName);
+            await requestLoginLink(normalizedEmail, venue, firstName, lastName);
             setLoginState('SENT');
         } catch(err) {
             const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';

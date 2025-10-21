@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import type { Performer, Rating, LeaderboardEntry } from './types.ts';
-import { getPerformers, submitRatings, loginWithToken, getTodaysRatings, getLeaderboardData, getFeedbackTags } from './services/performerService.ts';
+import type { Performer, Rating, LeaderboardEntry, RaterStats, ScoutLevel } from './types.ts';
+import { getPerformers, submitRatings, loginWithToken, getTodaysRatings, getLeaderboardData, getAllTimeLeaderboardData, getFeedbackTags, getRaterStats, getScoutLevels } from './services/performerService.ts';
 import Header from './components/Header.tsx';
 import PerformerCard from './components/PerformerCard.tsx';
 import Button from './components/Button.tsx';
@@ -10,6 +10,9 @@ import Leaderboard from './components/Leaderboard.tsx';
 type AuthState = 'LOGGED_OUT' | 'CHECKING_TOKEN' | 'LOGGED_IN' | 'TOKEN_ERROR';
 type SubmissionStatus = 'IDLE' | 'AWAITING_CONSENT' | 'GETTING_LOCATION' | 'SUBMITTING';
 type RatingInput = { score: number; tags: string[]; comment: string };
+type SubmissionResult = { success: boolean; pointsEarned: number } | null;
+type ViewMode = 'TODAY' | 'ALL_TIME';
+
 
 const App: React.FC = () => {
   const [performers, setPerformers] = useState<Performer[]>([]);
@@ -19,7 +22,7 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [submissionStatus, setSubmissionStatus] = useState<SubmissionStatus>('IDLE');
   const [submissionError, setSubmissionError] = useState<string | null>(null);
-  const [isSubmitted, setIsSubmitted] = useState<boolean>(false);
+  const [submissionResult, setSubmissionResult] = useState<SubmissionResult>(null);
   
   const [raterEmail, setRaterEmail] = useState<string | null>(null);
   const [venueName, setVenueName] = useState<string | null>(null);
@@ -31,7 +34,13 @@ const App: React.FC = () => {
   const [leaderboardData, setLeaderboardData] = useState<Record<string, LeaderboardEntry>>({});
   const [isLeaderboardLoading, setIsLeaderboardLoading] = useState<boolean>(true);
   
+  const [allTimeLeaderboardData, setAllTimeLeaderboardData] = useState<LeaderboardEntry[]>([]);
+  const [isAllTimeLeaderboardLoading, setIsAllTimeLeaderboardLoading] = useState<boolean>(false);
+  
   const [feedbackTags, setFeedbackTags] = useState<{positive: string[], constructive: string[]}>({ positive: [], constructive: [] });
+  const [raterStats, setRaterStats] = useState<RaterStats | null>(null);
+  const [scoutLevels, setScoutLevels] = useState<ScoutLevel[]>([]);
+  const [viewMode, setViewMode] = useState<ViewMode>('TODAY');
 
 
   // Persists session data to localStorage.
@@ -122,15 +131,19 @@ const App: React.FC = () => {
       setIsLeaderboardLoading(true);
       setError(null);
       
-      const [performersData, existingRatingsData, leaderboardResult, tagsData] = await Promise.all([
+      const [performersData, existingRatingsData, leaderboardResult, tagsData, raterStatsData, scoutLevelsData] = await Promise.all([
           getPerformers(venueName),
           getTodaysRatings(raterEmail, venueName),
           getLeaderboardData(venueName),
-          getFeedbackTags()
+          getFeedbackTags(),
+          getRaterStats(raterEmail),
+          getScoutLevels()
       ]);
 
       setPerformers(performersData);
       setExistingRatings(existingRatingsData);
+      setRaterStats(raterStatsData);
+      setScoutLevels(scoutLevelsData);
       
       const leaderboardMap = leaderboardResult.reduce((acc, entry) => {
         acc[entry.id] = entry;
@@ -154,6 +167,23 @@ const App: React.FC = () => {
       fetchInitialData();
     }
   }, [authState, fetchInitialData, venueName, raterEmail]);
+
+  const handleViewModeChange = useCallback(async (newMode: ViewMode) => {
+    setViewMode(newMode);
+    if (newMode === 'ALL_TIME' && allTimeLeaderboardData.length === 0) {
+        setIsAllTimeLeaderboardLoading(true);
+        try {
+            // Note: The backend will now ignore the venueName for this call and return global stats.
+            const data = await getAllTimeLeaderboardData(venueName || '');
+            setAllTimeLeaderboardData(data);
+        } catch (err) {
+            setError("Could not load all-time stats. Please try again later.");
+            console.error(err);
+        } finally {
+            setIsAllTimeLeaderboardLoading(false);
+        }
+    }
+  }, [venueName, allTimeLeaderboardData.length]);
 
   const handleRatingChange = (performerId: string, newScore: number) => {
     if (existingRatings[performerId]) return;
@@ -204,7 +234,7 @@ const App: React.FC = () => {
         return;
       }
 
-      await submitRatings(ratingsToSubmit, raterEmail, venueName, firstName, lastName, coords);
+      const { pointsEarned } = await submitRatings(ratingsToSubmit, raterEmail, venueName, firstName, lastName, coords);
       
       const newExistingRatings = { ...existingRatings };
       ratingsToSubmit.forEach(r => {
@@ -213,9 +243,9 @@ const App: React.FC = () => {
       setExistingRatings(newExistingRatings);
       setRatings({});
       
-      setIsSubmitted(true);
+      setSubmissionResult({ success: true, pointsEarned: pointsEarned });
       
-      // Re-fetch leaderboard data to show immediate impact
+      // Re-fetch leaderboard and rater stats to show immediate impact
       getLeaderboardData(venueName).then(leaderboardResult => {
           const leaderboardMap = leaderboardResult.reduce((acc, entry) => {
             acc[entry.id] = entry;
@@ -224,8 +254,9 @@ const App: React.FC = () => {
           setLeaderboardData(leaderboardMap);
       }).catch(err => console.error("Failed to refresh leaderboard", err));
 
+      getRaterStats(raterEmail).then(setRaterStats);
 
-      setTimeout(() => setIsSubmitted(false), 4000);
+      setTimeout(() => setSubmissionResult(null), 5000);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       setSubmissionError(`Submission Failed: ${errorMessage}`);
@@ -269,6 +300,11 @@ const App: React.FC = () => {
     setExistingRatings({});
     setAuthState('LOGGED_OUT');
     setIsLoading(true);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('performer-rater-session');
+    window.location.reload();
   };
 
   const ratedCount = Object.keys(ratings).filter(id => ratings[id] && ratings[id].score > 0).length;
@@ -334,8 +370,9 @@ const App: React.FC = () => {
       }
   }
   
-  const leaderboardValues = Object.values(leaderboardData);
+  const leaderboardValues = viewMode === 'TODAY' ? Object.values(leaderboardData) : allTimeLeaderboardData;
   const sortedLeaderboard = leaderboardValues.sort((a, b) => {
+      // Both views are now sorted by average rating first, then by rating count as a tie-breaker.
       if (b.averageRating !== a.averageRating) return b.averageRating - a.averageRating;
       return b.ratingCount - a.ratingCount;
   });
@@ -350,16 +387,27 @@ const App: React.FC = () => {
       );
     }
     
-    if (isSubmitted) {
+    if (submissionResult?.success) {
         return (
             <div className="text-center p-8 bg-gray-800 rounded-xl shadow-2xl animate-fade-in">
                 <h2 className="text-3xl font-bold text-brand-accent mb-4">Thank You!</h2>
                 <p className="text-lg text-gray-300">Your ratings have been submitted successfully.</p>
+                {submissionResult.pointsEarned > 0 && (
+                    <p className="mt-4 text-xl font-bold text-sky-400 animate-slide-in-bottom">
+                        +{submissionResult.pointsEarned.toLocaleString()} Scout Points Earned!
+                    </p>
+                )}
             </div>
         )
     }
-    
-    if (performers.length === 0) {
+
+    const performerList = viewMode === 'TODAY' ? performers : allTimeLeaderboardData;
+    const dataMap = viewMode === 'TODAY' ? leaderboardData : allTimeLeaderboardData.reduce((acc, entry) => {
+        acc[entry.id] = entry;
+        return acc;
+    }, {} as Record<string, LeaderboardEntry>);
+
+    if (performerList.length === 0 && viewMode === 'TODAY') {
         return (
              <div className="text-center p-8 bg-gray-800 rounded-xl shadow-2xl animate-fade-in">
                 <h2 className="text-2xl font-bold text-white mb-2">No Performers Found</h2>
@@ -367,33 +415,52 @@ const App: React.FC = () => {
             </div>
         )
     }
+    
+    if (performerList.length === 0 && viewMode === 'ALL_TIME' && !isAllTimeLeaderboardLoading) {
+        return (
+             <div className="text-center p-8 bg-gray-800 rounded-xl shadow-2xl animate-fade-in">
+                <h2 className="text-2xl font-bold text-white mb-2">No Historical Data</h2>
+                <p className="text-lg text-gray-400">No performers have been rated at {venueName} yet.</p>
+            </div>
+        )
+    }
 
     return (
       <div className="space-y-4">
-        {performers.map((performer, index) => {
-           const isRated = !!existingRatings[performer.id];
-           const currentRating = existingRatings[performer.id] || ratings[performer.id]?.score || 0;
-           const currentTags = ratings[performer.id]?.tags || [];
-           const currentComment = ratings[performer.id]?.comment || '';
-           const leaderboardInfo = leaderboardData[performer.id];
+        {performerList.map((p, index) => {
+           const performerInfo = viewMode === 'TODAY' ? (p as Performer) : {
+               id: (p as LeaderboardEntry).id,
+               name: (p as LeaderboardEntry).name,
+               bio: (p as LeaderboardEntry).bio,
+               socialLink: (p as LeaderboardEntry).socialLink
+           };
+
+           const isRated = viewMode === 'TODAY' ? !!existingRatings[performerInfo.id] : true;
+           const currentRating = viewMode === 'TODAY' ? (existingRatings[performerInfo.id] || ratings[performerInfo.id]?.score || 0) : (dataMap[performerInfo.id]?.averageRating || 0);
+           const currentTags = ratings[performerInfo.id]?.tags || [];
+           const currentComment = ratings[performerInfo.id]?.comment || '';
+           const leaderboardInfo = dataMap[performerInfo.id];
            
            return (
-              <div key={performer.id} className="animate-slide-in-bottom" style={{ animationDelay: `${index * 100}ms`}}>
+              <div key={performerInfo.id} className="animate-slide-in-bottom" style={{ animationDelay: `${index * 100}ms`}}>
                 <PerformerCard
-                  performer={performer}
+                  performer={performerInfo}
                   rating={currentRating}
-                  onRatingChange={(rating) => handleRatingChange(performer.id, rating)}
+                  onRatingChange={(rating) => handleRatingChange(performerInfo.id, rating)}
                   isRated={isRated}
                   selectedTags={currentTags}
-                  onFeedbackChange={(tags) => handleFeedbackChange(performer.id, tags)}
+                  onFeedbackChange={(tags) => handleFeedbackChange(performerInfo.id, tags)}
                   comment={currentComment}
-                  onCommentChange={(comment) => handleCommentChange(performer.id, comment)}
+                  onCommentChange={(comment) => handleCommentChange(performerInfo.id, comment)}
                   ratingCount={leaderboardInfo?.ratingCount ?? 0}
                   commentCount={leaderboardInfo?.commentCount ?? 0}
                   maxRatingCount={maxRatingCount}
+                  xp={leaderboardInfo?.xp}
+                  xpTrend={leaderboardInfo?.xpTrend}
                   positiveTags={feedbackTags.positive}
                   constructiveTags={feedbackTags.constructive}
                   venueName={venueName || ''}
+                  viewMode={viewMode}
                 />
               </div>
             );
@@ -405,7 +472,14 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-900 font-sans p-4 sm:p-8">
       <div className="max-w-7xl mx-auto">
-        <Header venueName={venueName} userName={firstName && lastName ? `${firstName} ${lastName}` : null} onChangeDetails={handleChangeDetails} />
+        <Header 
+            venueName={venueName} 
+            userName={firstName} 
+            raterStats={raterStats}
+            scoutLevels={scoutLevels}
+            onChangeDetails={handleChangeDetails} 
+            onLogout={handleLogout} 
+        />
         <main className="mt-12">
 
           {/* Leaderboard Section */}
@@ -413,13 +487,20 @@ const App: React.FC = () => {
             <>
               <div className="border-t border-gray-700"></div>
               <div className="mt-8">
-                <Leaderboard data={sortedLeaderboard} isLoading={isLeaderboardLoading} maxRatingCount={maxRatingCount} venueName={venueName || ''} />
+                <Leaderboard 
+                    data={sortedLeaderboard} 
+                    isLoading={viewMode === 'TODAY' ? isLeaderboardLoading : isAllTimeLeaderboardLoading} 
+                    maxRatingCount={maxRatingCount} 
+                    venueName={venueName || ''}
+                    viewMode={viewMode}
+                    onViewModeChange={handleViewModeChange}
+                />
               </div>
             </>
           )}
 
           {/* Performer List Section */}
-          {!isLoading && !error && !isSubmitted && performers.length > 0 && (
+          {!isLoading && !error && !submissionResult && viewMode === 'TODAY' && performers.length > 0 && (
             <>
               <div className="border-t border-gray-700"></div>
               <h2 className="text-2xl sm:text-3xl font-bold text-center mt-8 mb-6 text-white">
@@ -430,7 +511,7 @@ const App: React.FC = () => {
           
           {renderContent()}
 
-          {!isLoading && !error && !isSubmitted && performers.length > 0 && (
+          {!isLoading && !error && !submissionResult && viewMode === 'TODAY' && performers.length > 0 && (
             <footer className="mt-12 text-center animate-fade-in">
               <p className="mb-4 text-gray-400">{ratedCount} of {totalPerformers - Object.keys(existingRatings).length} new performers rated.</p>
               <Button onClick={handleInitialSubmit} disabled={ratedCount === 0 || submissionStatus !== 'IDLE'}>

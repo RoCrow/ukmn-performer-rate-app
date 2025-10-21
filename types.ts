@@ -21,4 +21,17 @@ export interface LeaderboardEntry {
   commentCount: number;
   bio?: string;
   socialLink?: string;
+  xp?: number;
+  xpTrend?: 'UP' | 'DOWN' | 'STABLE';
+}
+
+export interface RaterStats {
+  totalSP: number;
+  ratingsSubmitted: number;
+  commentsWritten: number;
+}
+
+export interface ScoutLevel {
+  name: string;
+  minSP: number;
 }

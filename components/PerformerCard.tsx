@@ -1,9 +1,8 @@
-
 import React, { useState, Fragment } from 'react';
 import type { Performer } from '../types.ts';
 import StarRating from './StarRating.tsx';
 import FeedbackTagger from './FeedbackTagger.tsx';
-import { getFeedbackSummary } from '../services/performerService.ts';
+import { getTodaysFeedbackSummary, getAllTimeFeedbackSummary } from '../services/performerService.ts';
 import HypeMeter from './HypeMeter.tsx';
 
 interface PerformerCardProps {
@@ -18,9 +17,12 @@ interface PerformerCardProps {
   ratingCount: number;
   commentCount: number;
   maxRatingCount: number;
+  xp?: number;
+  xpTrend?: 'UP' | 'DOWN' | 'STABLE';
   positiveTags: string[];
   constructiveTags: string[];
   venueName: string;
+  viewMode: 'TODAY' | 'ALL_TIME';
 }
 
 const WandIcon: React.FC<{className?: string}> = ({className}) => (
@@ -29,6 +31,25 @@ const WandIcon: React.FC<{className?: string}> = ({className}) => (
     </svg>
 );
 
+const LightningBoltIcon: React.FC<{className?: string}> = ({className}) => (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path d="M11 3a1 1 0 00-2 0v5H4a1 1 0 00-.82 1.573l7 10a1 1 0 001.64 0l7-10A1 1 0 0016 8h-5V3z" />
+    </svg>
+);
+
+// Fix: Use React.ComponentProps<'svg'> to ensure all SVG attributes including 'title' are correctly typed.
+const ArrowUpIcon: React.FC<React.ComponentProps<'svg'>> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" {...props}>
+    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.707-11.293a1 1 0 00-1.414 0l-3 3a1 1 0 001.414 1.414L9 9.414V13a1 1 0 102 0V9.414l1.293 1.293a1 1 0 001.414-1.414l-3-3z" clipRule="evenodd" />
+  </svg>
+);
+
+// Fix: Use React.ComponentProps<'svg'> to ensure all SVG attributes including 'title' are correctly typed.
+const ArrowDownIcon: React.FC<React.ComponentProps<'svg'>> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" {...props}>
+    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-.707-6.707a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 8.586V5a1 1 0 10-2 0v3.586L7.707 7.293a1 1 0 00-1.414 1.414l3 3z" clipRule="evenodd" />
+  </svg>
+);
 
 const ExternalLinkIcon: React.FC<{className?: string}> = ({className}) => (
     <svg xmlns="http://www.w3.org/2000/svg" className={className || "h-4 w-4"} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -54,9 +75,12 @@ const PerformerCard: React.FC<PerformerCardProps> = ({
     ratingCount,
     commentCount,
     maxRatingCount,
+    xp,
+    xpTrend,
     positiveTags,
     constructiveTags,
-    venueName
+    venueName,
+    viewMode
 }) => {
   const [isBioVisible, setIsBioVisible] = useState(false);
   const [summary, setSummary] = useState<string | null>(null);
@@ -69,7 +93,10 @@ const PerformerCard: React.FC<PerformerCardProps> = ({
     setSummaryError(null);
     setSummary(null);
     try {
-        const result = await getFeedbackSummary(performer.id, venueName);
+        const fetchSummary = viewMode === 'ALL_TIME' 
+            ? getAllTimeFeedbackSummary 
+            : getTodaysFeedbackSummary;
+        const result = await fetchSummary(performer.id, venueName);
         setSummary(result);
         setIsSummaryVisible(true); // Show summary on successful fetch
     } catch(err) {
@@ -93,6 +120,17 @@ const PerformerCard: React.FC<PerformerCardProps> = ({
 
   const canAnalyze = commentCount > 1;
 
+  const XPTrendIndicator = () => {
+      const title = viewMode === 'ALL_TIME' ? 'XP trend over the last week' : 'XP trend today';
+      if (xpTrend === 'UP') {
+          return <ArrowUpIcon className="w-4 h-4 text-green-400" title={title} />;
+      }
+      if (xpTrend === 'DOWN') {
+          return <ArrowDownIcon className="w-4 h-4 text-blue-400" title={title} />;
+      }
+      return null;
+  };
+
   return (
     <div className={`
       bg-gray-800 rounded-lg p-4 sm:p-6 flex flex-col items-center gap-4 
@@ -104,6 +142,13 @@ const PerformerCard: React.FC<PerformerCardProps> = ({
             <div className="flex flex-col sm:flex-row justify-between items-center sm:items-start gap-4">
                 <div className="flex-grow text-center sm:text-left">
                     <h3 className="text-xl font-bold text-white">{performer.name}</h3>
+                    {typeof xp === 'number' && (
+                        <div className="mt-1 flex items-center justify-center sm:justify-start gap-2 text-sm font-bold text-sky-400">
+                            <LightningBoltIcon className="w-4 h-4" />
+                            <span>{xp.toLocaleString()} XP</span>
+                            <XPTrendIndicator />
+                        </div>
+                    )}
                     {(performer.bio || performer.socialLink) && (
                         <div className="mt-4 text-sm">
                             {performer.bio && (
@@ -137,6 +182,7 @@ const PerformerCard: React.FC<PerformerCardProps> = ({
                     rating={rating}
                     onRate={onRatingChange}
                     disabled={isRated}
+                    isDisplayOnly={viewMode === 'ALL_TIME'}
                     />
                 </div>
             </div>
@@ -154,7 +200,7 @@ const PerformerCard: React.FC<PerformerCardProps> = ({
         )}
         
         <div className="w-full">
-            {!isRated && rating > 0 && (
+            {viewMode === 'TODAY' && !isRated && rating > 0 && (
                 <div className="w-full pt-4 mt-4 border-t border-gray-700 space-y-4">
                     <FeedbackTagger
                         selectedTags={selectedTags}
@@ -176,7 +222,7 @@ const PerformerCard: React.FC<PerformerCardProps> = ({
                 </div>
             )}
             
-            {(ratingCount > 0 || commentCount > 0) && (
+            {(commentCount > 0) && (
                 <div className="w-full pt-4 mt-4 border-t border-gray-700">
                     <button
                         onClick={handleSummaryToggle}
@@ -199,7 +245,7 @@ const PerformerCard: React.FC<PerformerCardProps> = ({
                         ) : (
                             <Fragment>
                                 <WandIcon className="w-4 h-4" />
-                                Feedback Summary ({commentCount} comments)
+                                {viewMode === 'ALL_TIME' ? `Lifetime Feedback Summary (${commentCount} comments)` : `Feedback Summary (${commentCount} comments)`}
                             </Fragment>
                         )}
                     </button>

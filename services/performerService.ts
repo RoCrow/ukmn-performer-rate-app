@@ -1,4 +1,4 @@
-import type { Performer, Rating, LeaderboardEntry } from '../types.ts';
+import type { Performer, Rating, LeaderboardEntry, RaterStats, ScoutLevel } from '../types.ts';
 
 // The URL for the deployed Google Apps Script. This is the single endpoint for all backend operations.
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwVzj7Czo4ae1mWFIs2FFkCfF1kyO-5IwJUkT2g4RQiUCgiRO0nOA64k9ysOex6CFjI/exec';
@@ -61,9 +61,33 @@ const postToWebApp = async (payload: object) => {
     }
 };
 
-export const getFeedbackSummary = async (performerId: string, venueName: string): Promise<string> => {
-    const result = await postToWebApp({ action: 'getFeedbackSummary', performerId, venueName });
+export const getScoutLevels = async (): Promise<ScoutLevel[]> => {
+    const result = await postToWebApp({ action: 'getScoutLevels' });
+    if (!result.scoutLevels) {
+        throw new Error("Scout Level data not found in the script's response.");
+    }
+    return result.scoutLevels;
+}
+
+export const getRaterStats = async (raterEmail: string): Promise<RaterStats> => {
+    const result = await postToWebApp({ action: 'getRaterStats', raterEmail });
+    if (!result.stats) {
+        throw new Error("Rater stats not found in the script's response.");
+    }
+    return result.stats;
+}
+
+export const getTodaysFeedbackSummary = async (performerId: string, venueName: string): Promise<string> => {
+    const result = await postToWebApp({ action: 'getTodaysFeedbackSummary', performerId, venueName });
     // Check if summary is a non-empty string.
+    if (!result.summary || typeof result.summary !== 'string' || result.summary.trim() === '') {
+        throw new Error("The AI returned an empty summary. This can happen if the comments are too short or lack specific feedback.");
+    }
+    return result.summary;
+}
+
+export const getAllTimeFeedbackSummary = async (performerId: string, venueName: string): Promise<string> => {
+    const result = await postToWebApp({ action: 'getAllTimeFeedbackSummary', performerId, venueName });
     if (!result.summary || typeof result.summary !== 'string' || result.summary.trim() === '') {
         throw new Error("The AI returned an empty summary. This can happen if the comments are too short or lack specific feedback.");
     }
@@ -111,6 +135,15 @@ export const getLeaderboardData = async (venueName: string): Promise<Leaderboard
     return result.leaderboard;
 }
 
+export const getAllTimeLeaderboardData = async (venueName: string): Promise<LeaderboardEntry[]> => {
+    const result = await postToWebApp({ action: 'getAllTimeLeaderboardData', venueName });
+    if (!result.leaderboard) {
+        throw new Error("All-Time Leaderboard data not found in the script's response.");
+    }
+    return result.leaderboard;
+}
+
+
 export const getPerformers = async (venueName: string): Promise<Performer[]> => {
   try {
     const result = await postToWebApp({ action: 'getPerformers', venueName });
@@ -132,7 +165,7 @@ export const submitRatings = async (
     firstName: string, 
     lastName: string,
     coords: GeolocationCoordinates | null
-): Promise<void> => {
+): Promise<{pointsEarned: number}> => {
   const payload: SubmitRatingsPayload = {
     action: 'submitRatings',
     ratings,
@@ -147,7 +180,8 @@ export const submitRatings = async (
       payload.longitude = coords.longitude;
   }
 
-  await postToWebApp(payload);
+  const result = await postToWebApp(payload);
+  return { pointsEarned: result.pointsEarned || 0 };
 };
 
 

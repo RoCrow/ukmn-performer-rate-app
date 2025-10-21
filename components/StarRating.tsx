@@ -5,24 +5,53 @@ interface StarRatingProps {
   rating: number;
   onRate: (rating: number) => void;
   disabled?: boolean;
+  isDisplayOnly?: boolean;
 }
 
-const StarIcon: React.FC<{filled: boolean; className?: string}> = ({filled, className}) => (
+const StarIcon: React.FC<{filled: boolean; className?: string; clipPath?: string}> = ({filled, className, clipPath}) => (
     <svg 
         className={`w-8 h-8 ${className} ${filled ? 'text-brand-accent' : 'text-gray-600'}`} 
         xmlns="http://www.w3.org/2000/svg" 
         viewBox="0 0 24 24" 
         fill="currentColor"
+        style={{ clipPath }}
     >
         <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
     </svg>
 );
 
 
-const StarRating: React.FC<StarRatingProps> = ({ count, rating, onRate, disabled = false }) => {
+const StarRating: React.FC<StarRatingProps> = ({ count, rating, onRate, disabled = false, isDisplayOnly = false }) => {
   const [hoverRating, setHoverRating] = useState(0);
 
   const stars = Array.from({ length: count }, (_, i) => i + 1);
+  
+  if (isDisplayOnly) {
+    return (
+        <div className="flex items-center space-x-1">
+            {stars.map((starValue) => {
+                const percentage = Math.max(0, Math.min(100, (rating - (starValue - 1)) * 100));
+                return (
+                    <div key={starValue} className="relative">
+                        <StarIcon filled={false} className="text-gray-600" />
+                        <div className="absolute top-0 left-0 overflow-hidden" style={{ width: `${percentage}%` }}>
+                            <StarIcon filled={true} className="text-brand-accent" />
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+    );
+  }
+  
+  const handleRate = (starValue: number) => {
+      // If the user clicks the same star as the current rating, reset it to 0.
+      if (starValue === rating) {
+          onRate(0);
+      } else {
+          onRate(starValue);
+      }
+  };
 
   return (
     <div className={`flex items-center space-x-1 ${disabled ? 'cursor-not-allowed' : ''}`}>
@@ -31,7 +60,7 @@ const StarRating: React.FC<StarRatingProps> = ({ count, rating, onRate, disabled
           key={starValue}
           onMouseEnter={!disabled ? () => setHoverRating(starValue) : undefined}
           onMouseLeave={!disabled ? () => setHoverRating(0) : undefined}
-          onClick={!disabled ? () => onRate(starValue) : undefined}
+          onClick={!disabled ? () => handleRate(starValue) : undefined}
           aria-label={disabled ? `Rated ${rating} out of ${count} stars` : `Rate ${starValue} star${starValue > 1 ? 's' : ''}`}
           className={`transition-transform duration-200 ease-in-out ${!disabled ? 'hover:scale-125' : ''} focus:outline-none focus:ring-2 focus:ring-brand-accent rounded-full`}
           disabled={disabled}

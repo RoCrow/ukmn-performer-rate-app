@@ -1,20 +1,44 @@
-
 import React, { useState, Fragment } from 'react';
 import type { LeaderboardEntry } from '../types.ts';
-import { getFeedbackSummary } from '../services/performerService.ts';
+import { getTodaysFeedbackSummary, getAllTimeFeedbackSummary } from '../services/performerService.ts';
 import HypeMeter from './HypeMeter.tsx';
+import ViewToggle from './ViewToggle.tsx';
+
+type ViewMode = 'TODAY' | 'ALL_TIME';
 
 interface LeaderboardProps {
   data: LeaderboardEntry[];
   isLoading: boolean;
   maxRatingCount: number;
   venueName: string;
+  viewMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
 }
 
 const WandIcon: React.FC<{className?: string}> = ({className}) => (
     <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 20 20" fill="currentColor">
         <path fillRule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38zM12 4.59L7.545 11H10v3.41L14.455 8H12V4.59z" clipRule="evenodd" />
     </svg>
+);
+
+const LightningBoltIcon: React.FC<{className?: string}> = ({className}) => (
+    <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 20 20" fill="currentColor">
+      <path d="M11 3a1 1 0 00-2 0v5H4a1 1 0 00-.82 1.573l7 10a1 1 0 001.64 0l7-10A1 1 0 0016 8h-5V3z" />
+    </svg>
+);
+
+// Fix: Use React.ComponentProps<'svg'> to ensure all SVG attributes including 'title' are correctly typed.
+const ArrowUpIcon: React.FC<React.ComponentProps<'svg'>> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" {...props}>
+    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.707-11.293a1 1 0 00-1.414 0l-3 3a1 1 0 001.414 1.414L9 9.414V13a1 1 0 102 0V9.414l1.293 1.293a1 1 0 001.414-1.414l-3-3z" clipRule="evenodd" />
+  </svg>
+);
+
+// Fix: Use React.ComponentProps<'svg'> to ensure all SVG attributes including 'title' are correctly typed.
+const ArrowDownIcon: React.FC<React.ComponentProps<'svg'>> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" {...props}>
+    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-.707-6.707a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 8.586V5a1 1 0 10-2 0v3.586L7.707 7.293a1 1 0 00-1.414 1.414l3 3z" clipRule="evenodd" />
+  </svg>
 );
 
 const ExternalLinkIcon: React.FC<{className?: string}> = ({className}) => (
@@ -35,15 +59,15 @@ const rankDetails = [
     cardClasses: 'bg-gradient-to-br from-green-500/30 to-emerald-600/30 border-2 border-green-400/80 shadow-2xl shadow-green-400/30',
     indicatorContainerClasses: 'bg-green-500 border-green-300',
   },
-  { // 2nd Place - Orange/Amber
+  { // 2nd Place - Orange
     text: '2nd',
-    cardClasses: 'bg-gradient-to-br from-amber-500/30 to-orange-600/30 border-2 border-amber-400/60 shadow-2xl shadow-amber-400/25',
-    indicatorContainerClasses: 'bg-amber-500 border-amber-300',
+    cardClasses: 'bg-gradient-to-br from-orange-400/30 to-amber-500/30 border-2 border-orange-300/60 shadow-2xl shadow-orange-400/25',
+    indicatorContainerClasses: 'bg-orange-500 border-orange-300',
   },
-  { // 3rd Place - Red/Bronze
+  { // 3rd Place - Reddish Bronze
     text: '3rd',
-    cardClasses: 'bg-gradient-to-br from-red-600/30 to-orange-700/30 border-2 border-red-500/40 shadow-2xl shadow-red-500/20',
-    indicatorContainerClasses: 'bg-red-600 border-red-400',
+    cardClasses: 'bg-gradient-to-br from-rose-600/30 to-orange-700/30 border-2 border-rose-500/40 shadow-2xl shadow-rose-500/20',
+    indicatorContainerClasses: 'bg-rose-600 border-rose-400',
   }
 ];
 
@@ -65,16 +89,17 @@ interface LeaderboardCardProps {
     rank: number;
     maxRatingCount: number;
     venueName: string;
+    viewMode: ViewMode;
 }
 
-const LeaderboardCard: React.FC<LeaderboardCardProps> = ({ entry, rank, maxRatingCount, venueName }) => {
+const LeaderboardCard: React.FC<LeaderboardCardProps> = ({ entry, rank, maxRatingCount, venueName, viewMode }) => {
   const [isBioVisible, setIsBioVisible] = useState(false);
   const [summary, setSummary] = useState<string | null>(null);
   const [isSummaryVisible, setIsSummaryVisible] = useState<boolean>(false);
   const [isSummaryLoading, setIsSummaryLoading] = useState<boolean>(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   
-  const { name, averageRating, ratingCount, commentCount, bio, socialLink } = entry;
+  const { name, averageRating, ratingCount, commentCount, bio, socialLink, xp, xpTrend } = entry;
   const styles = rankDetails[rank] || { cardClasses: 'bg-gray-700/50 border-gray-600' };
 
   const handleAnalyzeFeedback = async () => {
@@ -82,7 +107,8 @@ const LeaderboardCard: React.FC<LeaderboardCardProps> = ({ entry, rank, maxRatin
     setSummaryError(null);
     setSummary(null);
     try {
-        const result = await getFeedbackSummary(entry.id, venueName);
+        const fetcher = viewMode === 'TODAY' ? getTodaysFeedbackSummary : getAllTimeFeedbackSummary;
+        const result = await fetcher(entry.id, venueName);
         setSummary(result);
         setIsSummaryVisible(true);
     } catch(err) {
@@ -103,6 +129,17 @@ const LeaderboardCard: React.FC<LeaderboardCardProps> = ({ entry, rank, maxRatin
 
   const canAnalyze = commentCount > 1;
 
+  const XPTrendIndicator = () => {
+    const title = viewMode === 'ALL_TIME' ? 'XP trend over the last week' : 'XP trend today';
+    if (xpTrend === 'UP') {
+        return <ArrowUpIcon className="w-4 h-4 text-green-400" title={title} />;
+    }
+    if (xpTrend === 'DOWN') {
+        return <ArrowDownIcon className="w-4 h-4 text-blue-400" title={title} />;
+    }
+    return null;
+  };
+
   return (
     <div className={`p-4 rounded-lg flex flex-col gap-3 border transition-all transform hover:scale-[1.02] ${styles.cardClasses}`}>
       {/* Top row: rank, name, score */}
@@ -111,6 +148,13 @@ const LeaderboardCard: React.FC<LeaderboardCardProps> = ({ entry, rank, maxRatin
           <RankIndicator rank={rank} />
           <div className="flex-grow min-w-0">
             <p className="font-bold text-white text-lg truncate" title={name}>{name}</p>
+            {typeof xp === 'number' && xp > 0 && (
+                <div className="mt-1 flex items-center gap-2 text-xs font-bold text-sky-300/90">
+                    <LightningBoltIcon className="w-3.5 h-3.5" />
+                    <span>{xp.toLocaleString()} XP</span>
+                    <XPTrendIndicator />
+                </div>
+            )}
              {(bio || socialLink) && (
                 <div className="flex items-center gap-3 text-sm mt-1">
                     {bio && (
@@ -180,7 +224,7 @@ const LeaderboardCard: React.FC<LeaderboardCardProps> = ({ entry, rank, maxRatin
                 ) : (
                   <Fragment>
                     <WandIcon className="w-4 h-4" />
-                    Feedback Summary ({commentCount} comments)
+                    {viewMode === 'ALL_TIME' ? `Lifetime Feedback Summary (${commentCount} comments)` : `Feedback Summary (${commentCount} comments)`}
                   </Fragment>
                 )}
             </button>
@@ -219,38 +263,44 @@ const LeaderboardSkeleton: React.FC = () => (
     </div>
 );
 
-const Leaderboard: React.FC<LeaderboardProps> = ({ data, isLoading, maxRatingCount, venueName }) => {
-  if (isLoading) {
+const Leaderboard: React.FC<LeaderboardProps> = ({ data, isLoading, maxRatingCount, venueName, viewMode, onViewModeChange }) => {
+  const title = viewMode === 'TODAY' 
+    ? <>Tonight's <span className="text-brand-primary">Leaders</span></>
+    : <>All-Time <span className="text-brand-primary">Stats</span></>;
+  
+  const description = viewMode === 'TODAY' 
+    ? "Top performers based on tonight's ratings."
+    : `Top performers playing ${venueName} today, ranked by their all-time average rating.`;
+
+  const renderContent = () => {
+    if (isLoading) {
+      return <LeaderboardSkeleton />;
+    }
+    if (data.length === 0) {
+      return (
+        <div className="bg-gray-800 text-center p-8 rounded-xl border border-gray-700">
+            <p className="text-gray-400">No ratings submitted yet for this venue.</p>
+            <p className="text-white mt-1">Be the first to rate a performer to get the leaderboard started!</p>
+        </div>
+      );
+    }
     return (
-        <div className="mb-12">
-            <h2 className="text-2xl sm:text-3xl font-bold text-center mb-6 text-white">Tonight's Leaders</h2>
-            <LeaderboardSkeleton />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {data.slice(0, 3).map((entry, index) => (
+            <LeaderboardCard key={entry.id} entry={entry} rank={index} maxRatingCount={maxRatingCount} venueName={venueName} viewMode={viewMode} />
+            ))}
         </div>
     );
-  }
-
-  if (data.length === 0) {
-    return (
-        <div className="mb-12">
-            <h2 className="text-2xl sm:text-3xl font-bold text-center mb-6 text-white">Tonight's Leaders</h2>
-            <div className="bg-gray-800 text-center p-8 rounded-xl border border-gray-700">
-                <p className="text-gray-400">No ratings submitted yet for this venue.</p>
-                <p className="text-white mt-1">Be the first to rate a performer to get the leaderboard started!</p>
-            </div>
-        </div>
-    );
-  }
-
+  };
+  
   return (
     <div className="mb-12 animate-fade-in">
-      <h2 className="text-2xl sm:text-3xl font-bold text-center mb-6 text-white">
-        Tonight's <span className="text-brand-primary">Leaders</span>
-      </h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {data.slice(0, 3).map((entry, index) => (
-          <LeaderboardCard key={entry.id} entry={entry} rank={index} maxRatingCount={maxRatingCount} venueName={venueName} />
-        ))}
+      <div className="text-center mb-6">
+        <ViewToggle viewMode={viewMode} onChange={onViewModeChange} disabled={isLoading} />
+        <h2 className="text-2xl sm:text-3xl font-bold mt-6 mb-2 text-white">{title}</h2>
+        <p className="text-gray-400 max-w-lg mx-auto">{description}</p>
       </div>
+      {renderContent()}
     </div>
   );
 };

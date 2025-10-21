@@ -9,10 +9,22 @@ const WEB_APP_URL = 'https://rate.ukmusiciansnetwork.com';
 const PERFORMERS_SHEET_NAME = 'Performers';
 const RATERS_SHEET_NAME = 'Raters';
 const RATINGS_SHEET_NAME = 'Ratings';
-const TAGS_SHEET_NAME = 'Data Validation'; // New sheet for dynamic tags
+const DATA_VALIDATION_SHEET = 'Data Validation';
+const STATS_SHEET_NAME = 'PerformerStats';
+const RATER_HISTORY_SHEET_NAME = 'RaterHistory';
+const RATER_STATS_SHEET_NAME = 'RaterStats'; // New sheet for rater gamification
 
 // --- Token Expiration (in minutes) ---
 const TOKEN_EXPIRATION_MINUTES = 15;
+
+// --- Gameplay Mechanics ---
+const DAILY_XP_COOLDOWN_PERCENTAGE = 0.05; // 5% daily cooldown
+
+// --- Scout Points (SP) for Raters ---
+const SP_PER_RATING = 10;
+const SP_FOR_TAGS = 5; // Awarded once if at least one tag is present
+const SP_FOR_COMMENT = 15; // Awarded if comment is longer than MIN_COMMENT_LENGTH
+const MIN_COMMENT_LENGTH = 20;
 
 // --- Gemini API Configuration ---
 // IMPORTANT: You must set your Gemini API key in the script's properties.
@@ -20,6 +32,111 @@ const TOKEN_EXPIRATION_MINUTES = 15;
 // 2. Scroll to "Script Properties" and click "Add script property".
 // 3. Set the Property name to "API_KEY" and the Value to your key.
 const API_KEY = PropertiesService.getScriptProperties().getProperty('API_KEY');
+
+
+// =================================================================
+// TIME-DRIVEN TRIGGERS
+// =================================================================
+
+/**
+ * Snapshots the CurrentXP to PreviousDayXP for all performers.
+ * This should be run on a daily timer (e.g., between 3-4am).
+ * It also applies a small XP "cooldown" to keep the leaderboard competitive.
+ */
+function snapshotDailyXP() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const statsSheet = ss.getSheetByName(STATS_SHEET_NAME);
+  if (!statsSheet || statsSheet.getLastRow() < 2) {
+    Logger.log("snapshotDailyXP: Stats sheet not found or empty. Skipping.");
+    return;
+  }
+
+  const statsLock = LockService.getScriptLock();
+  statsLock.waitLock(30000); // Wait up to 30s
+
+  try {
+    const range = statsSheet.getRange(2, 1, statsSheet.getLastRow() - 1, statsSheet.getLastColumn());
+    const values = range.getValues();
+    
+    // Find column indices
+    const headers = statsSheet.getRange(1, 1, 1, statsSheet.getLastColumn()).getValues()[0];
+    const currentXPIndex = headers.indexOf('CurrentXP'); // Should be 5
+    const previousXPIndex = headers.indexOf('PreviousDayXP'); // Should be 7
+    
+    if (currentXPIndex === -1 || previousXPIndex === -1) {
+      Logger.log("snapshotDailyXP: Could not find 'CurrentXP' or 'PreviousDayXP' headers. Aborting.");
+      return;
+    }
+
+    const newValues = values.map(row => {
+      const currentXP = Number(row[currentXPIndex]) || 0;
+      
+      // Apply the cooldown/decay to the current XP value
+      const cooledDownXP = Math.floor(currentXP * (1 - DAILY_XP_COOLDOWN_PERCENTAGE));
+      
+      // Update the 'CurrentXP' with the new cooled-down value
+      row[currentXPIndex] = cooledDownXP;
+      
+      // Snapshot the original (pre-cooldown) value to 'PreviousDayXP'
+      row[previousXPIndex] = currentXP;
+      
+      return row;
+    });
+
+    range.setValues(newValues);
+    Logger.log(`snapshotDailyXP: Successfully updated XP for ${newValues.length} performers.`);
+
+  } catch (e) {
+    Logger.log(`snapshotDailyXP: An error occurred: ${e.message}`);
+  } finally {
+    statsLock.releaseLock();
+  }
+}
+
+/**
+ * Snapshots the CurrentXP to PreviousWeekXP for all performers.
+ * This should be run on a weekly timer (e.g., every Monday between 3-4am).
+ */
+function snapshotWeeklyXP() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const statsSheet = ss.getSheetByName(STATS_SHEET_NAME);
+  if (!statsSheet || statsSheet.getLastRow() < 2) {
+    Logger.log("snapshotWeeklyXP: Stats sheet not found or empty. Skipping.");
+    return;
+  }
+
+  const statsLock = LockService.getScriptLock();
+  statsLock.waitLock(30000); // Wait up to 30s
+
+  try {
+    const range = statsSheet.getRange(2, 1, statsSheet.getLastRow() - 1, statsSheet.getLastColumn());
+    const values = range.getValues();
+    
+    // Find column indices
+    const headers = statsSheet.getRange(1, 1, 1, statsSheet.getLastColumn()).getValues()[0];
+    const currentXPIndex = headers.indexOf('CurrentXP');
+    const previousWeekXPIndex = headers.indexOf('PreviousWeekXP'); // New column
+    
+    if (currentXPIndex === -1 || previousWeekXPIndex === -1) {
+      throw new Error("snapshotWeeklyXP: Could not find 'CurrentXP' or 'PreviousWeekXP' headers. Please add 'PreviousWeekXP' column to the 'PerformerStats' sheet.");
+    }
+
+    const newValues = values.map(row => {
+      const currentXP = Number(row[currentXPIndex]) || 0;
+      // Snapshot the current value to 'PreviousWeekXP'
+      row[previousWeekXPIndex] = currentXP;
+      return row;
+    });
+
+    range.setValues(newValues);
+    Logger.log(`snapshotWeeklyXP: Successfully updated weekly XP for ${newValues.length} performers.`);
+
+  } catch (e) {
+    Logger.log(`snapshotWeeklyXP: An error occurred: ${e.message}`);
+  } finally {
+    statsLock.releaseLock();
+  }
+}
 
 
 // =================================================================
@@ -208,11 +325,23 @@ function doPost(e) {
       case 'getLeaderboardData':
         responseData = handleGetLeaderboardData(payload);
         break;
+      case 'getAllTimeLeaderboardData':
+        responseData = handleGetAllTimeLeaderboardData(payload);
+        break;
       case 'getFeedbackTags':
         responseData = handleGetFeedbackTags();
         break;
-      case 'getFeedbackSummary': // New action for Gemini
-        responseData = handleGetFeedbackSummary(payload);
+      case 'getTodaysFeedbackSummary':
+        responseData = handleGetTodaysFeedbackSummary(payload);
+        break;
+      case 'getAllTimeFeedbackSummary':
+        responseData = handleGetAllTimeFeedbackSummary(payload);
+        break;
+      case 'getRaterStats':
+        responseData = handleGetRaterStats(payload);
+        break;
+      case 'getScoutLevels':
+        responseData = handleGetScoutLevels();
         break;
       case 'debugDateParsing':
         responseData = handleDebugDateParsing();
@@ -239,10 +368,87 @@ function doPost(e) {
 // =================================================================
 
 /**
- * Gets all comments for a specific performer for today, sends them to Gemini for summarization.
- * Implements caching to avoid redundant API calls.
+ * Gets the Scout Point levels and names from the Data Validation sheet.
  */
-function handleGetFeedbackSummary(payload) {
+function handleGetScoutLevels() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(DATA_VALIDATION_SHEET);
+  const defaultLevels = [{ name: 'New Scout', minSP: 0 }];
+
+  if (!sheet || sheet.getLastRow() < 2) {
+    return { scoutLevels: defaultLevels };
+  }
+  
+  // Read from column C (LevelName) and D (MinSP), starting at row 2
+  const data = sheet.getRange(2, 3, sheet.getLastRow() - 1, 2).getValues();
+  
+  const levels = data
+    .map(row => {
+      const name = row[0];
+      const minSP = parseInt(row[1], 10);
+      // Ensure both name and a valid number for SP are present
+      if (name && !isNaN(minSP)) {
+        return { name: name.toString().trim(), minSP: minSP };
+      }
+      return null;
+    })
+    .filter(level => level !== null); // Filter out any invalid rows
+
+  // Sort by minSP ascending to ensure correct level calculation on the frontend
+  levels.sort((a, b) => a.minSP - b.minSP);
+
+  if (levels.length === 0) {
+      return { scoutLevels: defaultLevels };
+  }
+
+  return { scoutLevels: levels };
+}
+
+
+/**
+ * Gets a rater's statistics (Scout Points, level, etc.).
+ */
+function handleGetRaterStats(payload) {
+  const { raterEmail } = payload;
+  if (!raterEmail) throw new Error("raterEmail is required to get stats.");
+  const normalizedEmail = raterEmail.toLowerCase();
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(RATER_STATS_SHEET_NAME);
+  
+  const defaultStats = {
+    totalSP: 0,
+    ratingsSubmitted: 0,
+    commentsWritten: 0
+  };
+
+  if (!sheet || sheet.getLastRow() < 2) {
+    return { stats: defaultStats };
+  }
+
+  const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const emailIndex = headers.indexOf('RaterEmail');
+
+  const raterRow = data.find(row => row[emailIndex] && row[emailIndex].toLowerCase() === normalizedEmail);
+
+  if (raterRow) {
+    return {
+      stats: {
+        totalSP: parseInt(raterRow[headers.indexOf('TotalSP')], 10) || 0,
+        ratingsSubmitted: parseInt(raterRow[headers.indexOf('RatingsSubmitted')], 10) || 0,
+        commentsWritten: parseInt(raterRow[headers.indexOf('CommentsWritten')], 10) || 0
+      }
+    };
+  }
+  
+  return { stats: defaultStats };
+}
+
+
+/**
+ * Gets all comments for a specific performer for TODAY, sends them to Gemini for summarization.
+ */
+function handleGetTodaysFeedbackSummary(payload) {
   const { performerId, venueName } = payload;
   if (!performerId || !venueName) {
     throw new Error("performerId and venueName are required for summary.");
@@ -252,7 +458,6 @@ function handleGetFeedbackSummary(payload) {
   const spreadsheetTimezone = ss.getSpreadsheetTimeZone();
   const todayString = Utilities.formatDate(new Date(), spreadsheetTimezone, 'yyyy-MM-dd');
 
-  // --- 1. Fetch current comments and count them ---
   const sheet = ss.getSheetByName(RATINGS_SHEET_NAME);
   if (!sheet || sheet.getLastRow() < 2) {
     return { summary: "No ratings data found." };
@@ -262,9 +467,9 @@ function handleGetFeedbackSummary(payload) {
   const comments = [];
   data.forEach(row => {
     const timestampString = normalizeDateString(row[0], spreadsheetTimezone);
-    const currentVenueName = row[4];
-    const currentPerformerId = row[5];
-    const comment = row[11]; // Column L is Comments
+    const currentVenueName = row[5]; // Column F
+    const currentPerformerId = row[6]; // Column G
+    const comment = row[12]; // Column M
 
     if (timestampString === todayString && 
         currentVenueName && currentVenueName.trim().toLowerCase() === venueName.trim().toLowerCase() && 
@@ -277,7 +482,6 @@ function handleGetFeedbackSummary(payload) {
   const currentCommentCount = comments.length;
   Logger.log(`[Feedback Summary] PerformerId: ${performerId}. Current comment count: ${currentCommentCount}`);
 
-  // --- 2. Check Cache ---
   const cache = CacheService.getScriptCache();
   const cacheKey = `summary_${venueName.replace(/\s/g, '_')}_${performerId}_${todayString}`;
   const cachedResult = cache.get(cacheKey);
@@ -294,7 +498,6 @@ function handleGetFeedbackSummary(payload) {
       Logger.log(`[Feedback Summary] CACHE MISS for key: ${cacheKey}`);
   }
 
-  // --- 3. Generate New Summary if Needed ---
   if (currentCommentCount < 2) {
     return { summary: "Not enough comments available to generate a meaningful summary." };
   }
@@ -308,23 +511,86 @@ Summary:`;
 
   const newSummary = callGeminiApi(prompt);
   
-  // --- 4. Store in Cache ---
   const dataToCache = {
     summary: newSummary,
     commentCount: currentCommentCount
   };
-  // Cache for 6 hours (21600 seconds)
   cache.put(cacheKey, JSON.stringify(dataToCache), 21600);
   Logger.log(`[Feedback Summary] Stored new summary in cache for key: ${cacheKey}`);
 
   return { summary: newSummary };
 }
 
+
+/**
+ * Gets the last 50 comments for a specific performer across all time and venues, and summarizes them.
+ */
+function handleGetAllTimeFeedbackSummary(payload) {
+  const { performerId } = payload;
+  if (!performerId) {
+    throw new Error("performerId is required for all-time summary.");
+  }
+  
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  const sheet = ss.getSheetByName(RATINGS_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) {
+    return { summary: "No ratings data found." };
+  }
+  
+  const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  const allPerformerComments = data
+    .filter(row => {
+      const currentPerformerId = row[6]; // Column G
+      const comment = row[12]; // Column M
+      return currentPerformerId.toString() === performerId.toString() &&
+             comment && comment.trim() !== '';
+    })
+    .sort((a, b) => new Date(b[0]) - new Date(a[0])) // Sort by timestamp descending
+    .slice(0, 50) // Take the most recent 50
+    .map(row => row[12].trim());
+
+  const currentCommentCount = allPerformerComments.length;
+  Logger.log(`[Global All-Time Summary] PerformerId: ${performerId}. Found ${currentCommentCount} comments to summarize.`);
+
+  const cache = CacheService.getScriptCache();
+  // Cache key is now global for the performer, based on their total number of comments ever.
+  const totalCommentCount = data.filter(r => r[6].toString() === performerId.toString() && r[12] && r[12].trim() !== '').length;
+  const cacheKey = `all_time_summary_global_${performerId}_${totalCommentCount}`;
+  const cachedResult = cache.get(cacheKey);
+
+  if (cachedResult) {
+    Logger.log(`[Global All-Time Summary] CACHE HIT for key: ${cacheKey}`);
+    return { summary: JSON.parse(cachedResult).summary };
+  } else {
+    Logger.log(`[Global All-Time Summary] CACHE MISS for key: ${cacheKey}`);
+  }
+  
+  if (currentCommentCount < 2) {
+    return { summary: "Not enough comments available to generate a meaningful summary." };
+  }
+  
+  const prompt = `Please summarize the following ${currentCommentCount} feedback comments for a music performer, sourced from all their events. Generate a concise, bulleted list highlighting the key positive themes and areas for improvement based on their entire history. The summary should be constructive and helpful for the artist.
+
+Comments:
+- "${allPerformerComments.join('"\n- "')}"
+
+Summary:`;
+
+  const newSummary = callGeminiApi(prompt);
+  
+  cache.put(cacheKey, JSON.stringify({ summary: newSummary }), 21600); // Cache for 6 hours
+  Logger.log(`[Global All-Time Summary] Stored new summary in cache for key: ${cacheKey}`);
+
+  return { summary: newSummary };
+}
+
+
 /**
  * Fetches feedback tags and their types from the 'Data Validation' sheet.
  */
 function handleGetFeedbackTags() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TAGS_SHEET_NAME);
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(DATA_VALIDATION_SHEET);
   if (!sheet || sheet.getLastRow() < 2) {
     return { positive: [], constructive: [] };
   }
@@ -361,12 +627,37 @@ function handleGetLeaderboardData(payload) {
   const spreadsheetTimezone = ss.getSpreadsheetTimeZone();
   const todayString = Utilities.formatDate(new Date(), spreadsheetTimezone, 'yyyy-MM-dd');
 
-  // Step 1: Get all performers scheduled for today at this venue and initialize their stats.
+  // Step 1: Get XP data from the PerformerStats sheet
+  const statsSheet = ss.getSheetByName(STATS_SHEET_NAME);
+  const xpMap = {};
+  if (statsSheet && statsSheet.getLastRow() > 1) {
+    const headers = statsSheet.getRange(1, 1, 1, statsSheet.getLastColumn()).getValues()[0];
+    const idIndex = headers.indexOf('PerformerID');
+    const xpIndex = headers.indexOf('CurrentXP');
+    const prevXPIndex = headers.indexOf('PreviousDayXP');
+    
+    if (idIndex > -1 && xpIndex > -1 && prevXPIndex > -1) {
+        const statsData = statsSheet.getRange(2, 1, statsSheet.getLastRow() - 1, statsSheet.getLastColumn()).getValues();
+        statsData.forEach(row => {
+          const performerId = row[idIndex].toString();
+          const currentXP = Number(row[xpIndex]) || 0;
+          const previousXP = Number(row[prevXPIndex]) || 0;
+
+          let trend = 'STABLE';
+          if (currentXP > previousXP) trend = 'UP';
+          else if (currentXP < previousXP) trend = 'DOWN';
+
+          xpMap[performerId] = { xp: currentXP, trend: trend };
+        });
+    }
+  }
+
+  // Step 2: Get all performers scheduled for today at this venue and initialize their stats.
   const performersSheet = ss.getSheetByName(PERFORMERS_SHEET_NAME);
   const ratingsByPerformer = {};
 
   if (performersSheet && performersSheet.getLastRow() > 1) {
-    const performerValues = performersSheet.getRange(2, 1, performersSheet.getLastRow() - 1, 6).getValues(); // Get up to social link
+    const performerValues = performersSheet.getRange(2, 1, performersSheet.getLastRow() - 1, 6).getValues();
     performerValues.forEach(row => {
       const id = row[0];
       const name = row[1];
@@ -376,33 +667,27 @@ function handleGetLeaderboardData(payload) {
       
       if (id && name && venue && venue.trim().toLowerCase() === venueName.trim().toLowerCase() && dateString === todayString) {
         ratingsByPerformer[id.toString()] = {
-          id: id.toString(),
-          name: name,
-          totalRating: 0,
-          ratingCount: 0,
-          commentCount: 0,
-          bio: row[4] || '',
-          socialLink: row[5] || ''
+          id: id.toString(), name: name, totalRating: 0, ratingCount: 0,
+          commentCount: 0, bio: row[4] || '', socialLink: row[5] || ''
         };
       }
     });
   }
 
-  // Step 2: Process the Ratings sheet and update the stats.
+  // Step 3: Process the Ratings sheet and update the stats.
   const ratingsSheet = ss.getSheetByName(RATINGS_SHEET_NAME);
   if (ratingsSheet && ratingsSheet.getLastRow() > 1) {
     const ratingsData = ratingsSheet.getRange(2, 1, ratingsSheet.getLastRow() - 1, ratingsSheet.getLastColumn()).getValues();
     
     ratingsData.forEach(row => {
       const timestampString = normalizeDateString(row[0], spreadsheetTimezone);
-      const currentVenueName = row[4];
+      const currentVenueName = row[5]; // Column F
       
       if (timestampString === todayString && currentVenueName && currentVenueName.trim().toLowerCase() === venueName.trim().toLowerCase()) {
-        const performerId = row[5].toString();
-        const ratingValue = parseFloat(row[7]);
-        const comment = row[11] || '';
+        const performerId = row[6].toString(); // Column G
+        const ratingValue = parseFloat(row[8]); // Column I
+        const comment = row[12] || ''; // Column M
 
-        // Check if this performer is in our list for today
         if (ratingsByPerformer[performerId]) {
           if (!isNaN(ratingValue)) {
             ratingsByPerformer[performerId].totalRating += ratingValue;
@@ -416,22 +701,93 @@ function handleGetLeaderboardData(payload) {
     });
   }
 
-  // Step 3: Calculate average and sort.
-  const leaderboard = Object.values(ratingsByPerformer).map(p => ({
-    ...p,
-    averageRating: p.ratingCount > 0 ? (p.totalRating / p.ratingCount) : 0,
-  }));
+  // Step 4: Calculate average, inject XP, and sort.
+  const leaderboard = Object.values(ratingsByPerformer).map(p => {
+    const xpData = xpMap[p.id.toString()] || { xp: 0, trend: 'STABLE' };
+    return {
+      ...p,
+      averageRating: p.ratingCount > 0 ? (p.totalRating / p.ratingCount) : 0,
+      xp: xpData.xp,
+      xpTrend: xpData.trend
+    };
+  });
   
   leaderboard.sort((a, b) => {
-    // Sort primarily by average rating
-    if (b.averageRating !== a.averageRating) {
-      return b.averageRating - a.averageRating;
-    }
-    // As a tie-breaker, sort by number of ratings
+    if (b.averageRating !== a.averageRating) return b.averageRating - a.averageRating;
     return b.ratingCount - a.ratingCount;
   });
 
   return { leaderboard: leaderboard };
+}
+
+
+/**
+ * Calculates and returns global stats for all performers across all venues and events.
+ */
+function handleGetAllTimeLeaderboardData(payload) {
+    // This function now returns global stats for all performers, ignoring any provided venueName.
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    // Step 1: Get all stats from PerformerStats. This is the master list of all performers.
+    const statsSheet = ss.getSheetByName(STATS_SHEET_NAME);
+    if (!statsSheet || statsSheet.getLastRow() < 2) {
+        return { leaderboard: [] };
+    }
+    const headers = statsSheet.getRange(1, 1, 1, statsSheet.getLastColumn()).getValues()[0];
+    const statsData = statsSheet.getRange(2, 1, statsSheet.getLastRow() - 1, headers.length).getValues();
+    const idIndex = headers.indexOf('PerformerID');
+    const nameIndex = headers.indexOf('PerformerName');
+    const totalRatingsIndex = headers.indexOf('TotalRatingsReceived');
+    const sumRatingsIndex = headers.indexOf('SumOfAllRatings');
+    const xpIndex = headers.indexOf('CurrentXP');
+    const prevWeekXPIndex = headers.indexOf('PreviousWeekXP');
+    
+    // Step 2: Get total comment counts for every performer, across all venues.
+    const ratingsSheet = ss.getSheetByName(RATINGS_SHEET_NAME);
+    const commentCounts = {};
+    if (ratingsSheet && ratingsSheet.getLastRow() > 1) {
+      const ratingsData = ratingsSheet.getRange(2, 1, ratingsSheet.getLastRow() - 1, ratingsSheet.getLastColumn()).getValues();
+      ratingsData.forEach(row => {
+          const pid = row[6].toString(); // Performer ID is in Column G
+          const comment = row[12]; // Comment is in Column M
+          if(pid && comment && comment.trim() !== '') {
+            commentCounts[pid] = (commentCounts[pid] || 0) + 1;
+          }
+      })
+    }
+    
+    const leaderboard = statsData
+      .map(row => {
+        const id = row[idIndex].toString();
+        const totalRatings = parseInt(row[totalRatingsIndex], 10) || 0;
+        const sumRatings = parseFloat(row[sumRatingsIndex]) || 0;
+        const currentXP = Number(row[xpIndex]) || 0;
+        const previousWeekXP = Number(row[prevWeekXPIndex]) || 0;
+
+        let trend = 'STABLE';
+        if (currentXP > previousWeekXP) trend = 'UP';
+        if (currentXP < previousWeekXP) trend = 'DOWN';
+
+        return {
+          id: id,
+          name: row[nameIndex],
+          averageRating: totalRatings > 0 ? sumRatings / totalRatings : 0,
+          ratingCount: totalRatings,
+          commentCount: commentCounts[id] || 0,
+          bio: '', // Bio/social are not stored in the stats sheet
+          socialLink: '',
+          xp: currentXP,
+          xpTrend: trend
+        };
+      });
+
+    // Client-side will handle sorting, but pre-sorting here is good practice.
+    leaderboard.sort((a, b) => {
+      if (b.averageRating !== a.averageRating) return b.averageRating - a.averageRating;
+      return b.ratingCount - a.ratingCount;
+    });
+
+    return { leaderboard };
 }
 
 
@@ -507,6 +863,7 @@ function handleRequestLogin(payload) {
   if (!email || !firstName || !lastName || !venueName) {
     throw new Error("Missing required fields for login request.");
   }
+  const normalizedEmail = email.toLowerCase();
 
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(RATERS_SHEET_NAME);
   if (!sheet) throw new Error(`Sheet "${RATERS_SHEET_NAME}" not found.`);
@@ -516,17 +873,20 @@ function handleRequestLogin(payload) {
   
   const data = sheet.getDataRange().getValues();
   let raterRow = -1;
+  // Start loop at 1 to skip headers. Check column B (index 1) for email.
   for (let i = 1; i < data.length; i++) {
-    if (data[i][0] === email) {
+    if (data[i][1] && data[i][1].toLowerCase() === normalizedEmail) {
       raterRow = i + 1;
       break;
     }
   }
 
   if (raterRow !== -1) {
-    sheet.getRange(raterRow, 1, 1, 6).setValues([[email, firstName, lastName, venueName, token, expiry]]);
+    // Update existing rater info, starting from Column B (Email). Do not overwrite RaterID.
+    sheet.getRange(raterRow, 2, 1, 6).setValues([[normalizedEmail, firstName, lastName, venueName, token, expiry]]);
   } else {
-    sheet.appendRow([email, firstName, lastName, venueName, token, expiry]);
+    // Append new rater with a placeholder for RaterID.
+    sheet.appendRow(['', normalizedEmail, firstName, lastName, venueName, token, expiry]);
   }
   
   const loginUrl = `${WEB_APP_URL}?token=${token}`;
@@ -549,7 +909,7 @@ function handleRequestLogin(payload) {
     </html>`;
   
   MailApp.sendEmail({
-    to: email,
+    to: normalizedEmail,
     from: 'team@ukmusiciansnetwork.com',
     subject: subject,
     htmlBody: body,
@@ -573,16 +933,19 @@ function handleVerifyToken(payload) {
   
   let raterInfo = null;
   for (let i = 1; i < data.length; i++) {
-    if (data[i][4] === token) { // Column E is Auth Token
-      const expiryDate = new Date(data[i][5]); // Column F is Token Expiry
+    // Column F (index 5) is Auth Token
+    if (data[i][5] === token) {
+      // Column G (index 6) is Token Expiry
+      const expiryDate = new Date(data[i][6]); 
       if (expiryDate.getTime() > new Date().getTime()) {
         raterInfo = {
-          email: data[i][0],
-          firstName: data[i][1],
-          lastName: data[i][2],
-          venue: data[i][3],
+          email: data[i][1],     // Column B
+          firstName: data[i][2], // Column C
+          lastName: data[i][3],  // Column D
+          venue: data[i][4],     // Column E
         };
-        sheet.getRange(i + 1, 5, 1, 2).setValues([["", ""]]);
+        // Clear token and expiry from columns F and G
+        sheet.getRange(i + 1, 6, 1, 2).setValues([["", ""]]);
       }
       break;
     }
@@ -601,6 +964,7 @@ function handleVerifyToken(payload) {
 function handleGetTodaysRatings(payload) {
     const { raterEmail, venueName } = payload;
     if (!raterEmail || !venueName) throw new Error("raterEmail and venueName are required.");
+    const normalizedEmail = raterEmail.toLowerCase();
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = ss.getSheetByName(RATINGS_SHEET_NAME);
@@ -616,12 +980,12 @@ function handleGetTodaysRatings(payload) {
     const ratings = {};
     data.forEach(row => {
         const timestampString = normalizeDateString(row[0], spreadsheetTimezone);
-        const currentRaterEmail = row[1];
-        const currentVenueName = row[4];
+        const currentRaterEmail = row[2]; // Column C
+        const currentVenueName = row[5];  // Column F
         
-        if (timestampString === todayString && currentRaterEmail === raterEmail && currentVenueName && currentVenueName.trim().toLowerCase() === venueName.trim().toLowerCase()) {
-            const performerId = row[5];
-            const ratingValue = row[7];
+        if (timestampString === todayString && currentRaterEmail && currentRaterEmail.toLowerCase() === normalizedEmail && currentVenueName && currentVenueName.trim().toLowerCase() === venueName.trim().toLowerCase()) {
+            const performerId = row[6]; // Column G
+            const ratingValue = row[8]; // Column I
             ratings[performerId] = ratingValue;
         }
     });
@@ -631,42 +995,119 @@ function handleGetTodaysRatings(payload) {
 
 
 /**
- * Submits new ratings to the spreadsheet.
+ * Submits new ratings, updates performer stats, and awards Scout Points to the rater.
  */
 function handleSubmitRatings(payload) {
   const { ratings, raterEmail, firstName, lastName, venueName, latitude, longitude } = payload;
   if (!ratings || !raterEmail || !venueName || !firstName || !lastName) {
     throw new Error("Missing required fields for submitting ratings.");
   }
+  const normalizedRaterEmail = raterEmail.toLowerCase();
   
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+  
+  // Part 0: Find or Create Rater ID. This section is locked to prevent race conditions.
+  const raterIdLock = LockService.getScriptLock();
+  raterIdLock.waitLock(20000); // Wait up to 20 seconds for the lock
+  let raterId;
+  try {
+    const ratersSheet = ss.getSheetByName(RATERS_SHEET_NAME);
+    if (!ratersSheet) throw new Error(`Sheet "${RATERS_SHEET_NAME}" not found.`);
+    
+    const ratersData = ratersSheet.getDataRange().getValues();
+    const ratersHeaders = ratersData[0];
+    const raterIdIndex = ratersHeaders.indexOf('RaterID');
+    const raterEmailIndex = ratersHeaders.indexOf('Email');
+    const firstNameIndex = ratersHeaders.indexOf('First Name');
+    const lastNameIndex = ratersHeaders.indexOf('Last Name');
+
+    if (raterIdIndex === -1 || raterEmailIndex === -1 || firstNameIndex === -1 || lastNameIndex === -1) {
+      throw new Error("Raters sheet is missing one or more required headers (RaterID, Email, First Name, Last Name).");
+    }
+
+    let raterRowNumber = -1;
+    let existingRaterId = null;
+
+    // Find the rater by email (case-insensitive)
+    for (let i = 1; i < ratersData.length; i++) {
+        if (ratersData[i][raterEmailIndex] && ratersData[i][raterEmailIndex].toLowerCase() === normalizedRaterEmail) {
+            raterRowNumber = i + 1; // 1-based index for getRange
+            existingRaterId = ratersData[i][raterIdIndex];
+            break;
+        }
+    }
+
+    // If rater doesn't exist, create them. This handles the login bypass scenario.
+    if (raterRowNumber === -1) {
+        ratersSheet.appendRow(['', normalizedRaterEmail, firstName, lastName, venueName, '', '']);
+        raterRowNumber = ratersSheet.getLastRow(); // The row number of the newly added rater
+        existingRaterId = null; // Mark that an ID needs to be generated.
+    } else {
+        // If the rater exists, update their name in case it changed in the app.
+        ratersSheet.getRange(raterRowNumber, firstNameIndex + 1).setValue(firstName);
+        ratersSheet.getRange(raterRowNumber, lastNameIndex + 1).setValue(lastName);
+    }
+
+    // Now, ensure the rater has a RaterID
+    if (existingRaterId && existingRaterId.toString().trim() !== '') {
+        raterId = existingRaterId;
+    } else {
+        // Rater exists but needs an ID, or was just created. Generate a new one.
+        const allRaterData = ratersSheet.getDataRange().getValues(); // Re-fetch to include any new rows
+        let maxIdNum = 0;
+        allRaterData.forEach(row => {
+            const idVal = row[raterIdIndex];
+            if (idVal && typeof idVal === 'string' && idVal.startsWith('RID')) {
+                const num = parseInt(idVal.substring(3), 10);
+                if (!isNaN(num) && num > maxIdNum) {
+                    maxIdNum = num;
+                }
+            }
+        });
+        raterId = `RID${maxIdNum + 1}`;
+        // Write the new ID back to the Raters sheet at the correct row
+        ratersSheet.getRange(raterRowNumber, raterIdIndex + 1).setValue(raterId);
+    }
+  } finally {
+      raterIdLock.releaseLock();
+  }
+  // --- End of Rater ID logic ---
+  
+
   const ratingsSheet = ss.getSheetByName(RATINGS_SHEET_NAME);
   if (!ratingsSheet) throw new Error(`Sheet "${RATINGS_SHEET_NAME}" not found.`);
 
+  const timestamp = new Date();
+
+  // Part 1: Log ratings & calculate SP earned in this submission
   const performersSheet = ss.getSheetByName(PERFORMERS_SHEET_NAME);
   const performerData = performersSheet.getRange(2, 1, performersSheet.getLastRow() - 1, 2).getValues();
   const performerNameMap = performerData.reduce((map, row) => {
-    map[row[0]] = row[1];
+    map[row[0].toString()] = row[1];
     return map;
   }, {});
 
-  const timestamp = new Date();
-  
+  let spEarnedThisSubmission = 0;
+  let commentsWrittenThisSubmission = 0;
+
   const rowsToAdd = ratings.map(rating => {
-    const performerName = performerNameMap[rating.id] || 'Performer Not Found';
+    spEarnedThisSubmission += SP_PER_RATING;
+    if (rating.feedbackTags && rating.feedbackTags.length > 0) {
+      spEarnedThisSubmission += SP_FOR_TAGS;
+    }
+    // FIX: Decouple comment counting from SP awarding for accurate stats
+    if (rating.comment && rating.comment.trim().length > 0) {
+      commentsWrittenThisSubmission += 1; // Count any non-empty comment
+      // Only award points for longer, more valuable comments
+      if (rating.comment.trim().length > MIN_COMMENT_LENGTH) {
+        spEarnedThisSubmission += SP_FOR_COMMENT;
+      }
+    }
+    const performerName = performerNameMap[rating.id.toString()] || 'Performer Not Found';
     return [
-      timestamp,
-      raterEmail,
-      firstName,
-      lastName,
-      venueName,
-      rating.id,
-      performerName,
-      rating.rating,
-      (rating.feedbackTags || []).join(', '),
-      latitude || '',
-      longitude || '',
-      rating.comment || ''
+      timestamp, raterId, normalizedRaterEmail, firstName, lastName, venueName, rating.id,
+      performerName, rating.rating, (rating.feedbackTags || []).join(', '),
+      latitude || '', longitude || '', rating.comment || ''
     ];
   });
   
@@ -674,8 +1115,139 @@ function handleSubmitRatings(payload) {
       ratingsSheet.getRange(ratingsSheet.getLastRow() + 1, 1, rowsToAdd.length, rowsToAdd[0].length).setValues(rowsToAdd);
   }
 
-  return { message: 'Ratings submitted successfully.' };
+  // Part 2: Update Rater Stats (Gamification)
+  const raterStatsLock = LockService.getScriptLock();
+  raterStatsLock.waitLock(20000);
+  try {
+    let raterStatsSheet = ss.getSheetByName(RATER_STATS_SHEET_NAME);
+    if (!raterStatsSheet) {
+      raterStatsSheet = ss.insertSheet(RATER_STATS_SHEET_NAME);
+      raterStatsSheet.appendRow(['RaterID', 'RaterEmail', 'TotalSP', 'RatingsSubmitted', 'CommentsWritten', 'LastUpdated']);
+    }
+
+    const headers = raterStatsSheet.getRange(1, 1, 1, raterStatsSheet.getLastColumn()).getValues()[0];
+    const emailIndex = headers.indexOf('RaterEmail');
+    const data = raterStatsSheet.getLastRow() > 1 ? raterStatsSheet.getRange(2, 1, raterStatsSheet.getLastRow() - 1, headers.length).getValues() : [];
+    
+    let raterRowIndex = -1;
+    for (let i = 0; i < data.length; i++) {
+        if(data[i][emailIndex] && data[i][emailIndex].toLowerCase() === normalizedRaterEmail) {
+            raterRowIndex = i + 2; // 1-based index + header row
+            break;
+        }
+    }
+
+    if (raterRowIndex !== -1) {
+        const spIndex = headers.indexOf('TotalSP');
+        const ratingsIndex = headers.indexOf('RatingsSubmitted');
+        const commentsIndex = headers.indexOf('CommentsWritten');
+
+        const currentSP = parseInt(raterStatsSheet.getRange(raterRowIndex, spIndex + 1).getValue(), 10) || 0;
+        const currentRatings = parseInt(raterStatsSheet.getRange(raterRowIndex, ratingsIndex + 1).getValue(), 10) || 0;
+        const currentComments = parseInt(raterStatsSheet.getRange(raterRowIndex, commentsIndex + 1).getValue(), 10) || 0;
+        
+        raterStatsSheet.getRange(raterRowIndex, 1, 1, 6).setValues([[
+            raterId, normalizedRaterEmail,
+            currentSP + spEarnedThisSubmission,
+            currentRatings + ratings.length,
+            currentComments + commentsWrittenThisSubmission,
+            timestamp
+        ]]);
+    } else {
+        // New rater, append their stats
+        raterStatsSheet.appendRow([
+            raterId,
+            normalizedRaterEmail,
+            spEarnedThisSubmission,
+            ratings.length,
+            commentsWrittenThisSubmission,
+            timestamp
+        ]);
+    }
+
+  } finally {
+    raterStatsLock.releaseLock();
+  }
+
+  // Part 3: Update Lifetime Performer Stats
+  const performerStatsLock = LockService.getScriptLock();
+  performerStatsLock.waitLock(20000);
+  try {
+    let statsSheet = ss.getSheetByName(STATS_SHEET_NAME);
+    if (!statsSheet) {
+      statsSheet = ss.insertSheet(STATS_SHEET_NAME);
+      statsSheet.appendRow(['PerformerID', 'PerformerName', 'TotalRatingsReceived', 'SumOfAllRatings', 'UniqueRaterCount', 'CurrentXP', 'LastUpdated', 'PreviousDayXP', 'PreviousWeekXP']);
+    }
+    const lastStatsRow = statsSheet.getLastRow();
+    const headers = statsSheet.getRange(1, 1, 1, statsSheet.getLastColumn()).getValues()[0];
+    const existingStatsData = lastStatsRow > 1 ? statsSheet.getRange(2, 1, lastStatsRow - 1, headers.length).getValues() : [];
+    const statsMap = existingStatsData.reduce((map, row, index) => {
+      const performerId = row[headers.indexOf('PerformerID')].toString();
+      map[performerId] = {
+        rowIndex: index + 2,
+        totalRatings: parseInt(row[headers.indexOf('TotalRatingsReceived')], 10) || 0,
+        sumRatings: parseFloat(row[headers.indexOf('SumOfAllRatings')]) || 0,
+        uniqueRaters: parseInt(row[headers.indexOf('UniqueRaterCount')], 10) || 0,
+      };
+      return map;
+    }, {});
+
+    let historySheet = ss.getSheetByName(RATER_HISTORY_SHEET_NAME);
+    if (!historySheet) {
+      historySheet = ss.insertSheet(RATER_HISTORY_SHEET_NAME);
+      historySheet.appendRow(['PerformerID', 'RaterID']);
+    }
+    const lastHistoryRow = historySheet.getLastRow();
+    const historyData = lastHistoryRow > 1 ? historySheet.getRange(2, 1, lastHistoryRow - 1, 2).getValues() : [];
+    const historySet = new Set(historyData.map(row => `${row[0]}_${row[1]}`));
+    
+    const newPerformersToAppend = [];
+    const newHistoryToAppend = [];
+
+    ratings.forEach(rating => {
+      const performerId = rating.id.toString();
+      const historyKey = `${performerId}_${raterId}`; // Use raterId
+      let isNewUniqueRater = false;
+
+      if (!historySet.has(historyKey)) {
+        isNewUniqueRater = true;
+        newHistoryToAppend.push([performerId, raterId]); // Use raterId
+        historySet.add(historyKey);
+      }
+
+      const existingStat = statsMap[performerId];
+      if (existingStat) {
+        existingStat.totalRatings += 1;
+        existingStat.sumRatings += rating.rating;
+        if (isNewUniqueRater) existingStat.uniqueRaters += 1;
+        const newXP = existingStat.sumRatings + (existingStat.uniqueRaters * 10);
+        statsSheet.getRange(existingStat.rowIndex, 3, 1, 5).setValues([
+          [existingStat.totalRatings, existingStat.sumRatings, existingStat.uniqueRaters, newXP, timestamp]
+        ]);
+      } else {
+        const performerName = performerNameMap[performerId] || 'Unknown';
+        const initialXP = rating.rating + 10;
+        newPerformersToAppend.push([
+          performerId, performerName, 1, rating.rating, 1, initialXP, timestamp, initialXP, 0
+        ]);
+        statsMap[performerId] = { rowIndex: -1, totalRatings: 1, sumRatings: rating.rating, uniqueRaters: 1 };
+      }
+    });
+
+    if (newPerformersToAppend.length > 0) {
+      statsSheet.getRange(statsSheet.getLastRow() + 1, 1, newPerformersToAppend.length, 9).setValues(newPerformersToAppend);
+    }
+    if (newHistoryToAppend.length > 0) {
+      historySheet.getRange(historySheet.getLastRow() + 1, 1, newHistoryToAppend.length, 2).setValues(newHistoryToAppend);
+    }
+
+  } finally {
+    performerStatsLock.releaseLock();
+  }
+
+  return { message: 'Ratings submitted successfully.', pointsEarned: spEarnedThisSubmission };
 }
+
 
 /**
  * A diagnostic function to help debug date parsing issues.
