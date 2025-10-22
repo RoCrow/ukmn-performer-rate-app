@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import type { Performer, Rating, LeaderboardEntry, RaterStats, ScoutLevel } from './types.ts';
 import { getPerformers, submitRatings, loginWithToken, getTodaysRatings, getLeaderboardData, getAllTimeLeaderboardData, getFeedbackTags, getRaterStats, getScoutLevels } from './services/performerService.ts';
@@ -425,8 +426,8 @@ const App: React.FC = () => {
         return statsB.ratingCount - statsA.ratingCount;
     });
 
-    const maxTodaysRatingCount = Math.max(0, ...Object.values(todaysStatsMap).map(s => s.ratingCount));
-    const maxAllTimeRatingCount = Math.max(0, ...Object.values(allTimeStatsMap).map(s => s.ratingCount));
+    const maxTodaysRatingCount = Math.max(0, ...Object.values(todaysStatsMap).map((s: LeaderboardEntry) => s.ratingCount));
+    const maxAllTimeRatingCount = Math.max(0, ...Object.values(allTimeStatsMap).map((s: LeaderboardEntry) => s.ratingCount));
 
     return (
       <div className="space-y-4">
@@ -490,7 +491,7 @@ const App: React.FC = () => {
             onChangeDetails={handleChangeDetails} 
             onLogout={handleLogout} 
         />
-        <main className="mt-12">
+        <main className="mt-12 pb-32">
           
           {!isLoading && !error && !submissionResult && performers.length > 0 && (
             <>
@@ -506,20 +507,24 @@ const App: React.FC = () => {
           
           {renderContent()}
 
-          {!isLoading && !error && !submissionResult && performers.length > 0 && (
-            <footer className="mt-12 text-center animate-fade-in">
-              <p className="mb-4 text-gray-400">{ratedCount} of {totalPerformers - Object.keys(existingRatings).length} new performers rated.</p>
-              <Button onClick={handleInitialSubmit} disabled={ratedCount === 0 || submissionStatus !== 'IDLE'}>
-                {getButtonText()}
-              </Button>
-              {submissionError && (
-                <p className="mt-4 text-red-400 bg-red-900/20 p-3 rounded-lg">{submissionError}</p>
-
-              )}
-            </footer>
-          )}
         </main>
       </div>
+      
+      {!isLoading && !error && !submissionResult && performers.length > 0 && (
+        <footer className="fixed bottom-0 left-0 right-0 z-20 p-4 pointer-events-none">
+          <div className="max-w-lg mx-auto pointer-events-auto flex flex-col items-center gap-3 text-center animate-slide-in-bottom">
+            <p className="text-sm text-white bg-black/50 backdrop-blur-sm rounded-full px-3 py-1 shadow-lg">
+              {ratedCount} of {totalPerformers - Object.keys(existingRatings).length} new performers rated.
+            </p>
+            <Button onClick={handleInitialSubmit} disabled={ratedCount === 0 || submissionStatus !== 'IDLE'}>
+              {getButtonText()}
+            </Button>
+            {submissionError && (
+              <p className="text-red-400 bg-red-900/50 p-3 rounded-lg w-full shadow-lg">{submissionError}</p>
+            )}
+          </div>
+        </footer>
+      )}
     </div>
   );
 };
