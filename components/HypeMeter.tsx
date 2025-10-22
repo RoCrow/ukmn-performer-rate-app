@@ -1,12 +1,13 @@
 import React from 'react';
 
 interface HypeMeterProps {
+    title: string;
     count: number;
     maxCount: number;
     isLeaderboard?: boolean;
 }
 
-const HypeMeter: React.FC<HypeMeterProps> = ({ count, maxCount, isLeaderboard = false }) => {
+const HypeMeter: React.FC<HypeMeterProps> = ({ title, count, maxCount, isLeaderboard = false }) => {
     // If maxCount is 0, but this performer has ratings, set maxCount to count to avoid division by zero.
     const effectiveMaxCount = Math.max(1, maxCount, count);
     const widthPercentage = Math.min(100, (count / effectiveMaxCount) * 100);
@@ -16,7 +17,7 @@ const HypeMeter: React.FC<HypeMeterProps> = ({ count, maxCount, isLeaderboard = 
     return (
         <div className="w-full">
             <div className="flex justify-between items-center text-xs text-gray-400 mb-1 font-medium">
-                <span>Hype Score = <span className="text-white font-bold">{Math.round(widthPercentage)}%</span></span>
+                <span>{title} = <span className="text-white font-bold">{Math.round(widthPercentage)}%</span></span>
                 {count > 0 && <span>{count} Rating{count !== 1 ? 's' : ''}</span>}
             </div>
             <div className={`w-full bg-gray-700/50 rounded-full ${barHeight} overflow-hidden`}>

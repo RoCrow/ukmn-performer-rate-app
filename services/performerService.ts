@@ -1,3 +1,4 @@
+
 import type { Performer, Rating, LeaderboardEntry, RaterStats, ScoutLevel } from '../types.ts';
 
 // The URL for the deployed Google Apps Script. This is the single endpoint for all backend operations.
@@ -16,15 +17,18 @@ interface SubmitRatingsPayload {
 
 // Helper function to handle all API requests to the Google Apps Script
 const postToWebApp = async (payload: object) => {
+    // This new implementation uses URLSearchParams to send the payload.
+    // This method is more robust against the common CORS/redirect issues
+    // that can occur when using fetch with Google Apps Script web apps.
+    const formData = new URLSearchParams();
+    formData.append('payload', JSON.stringify(payload));
+
     try {
         const response = await fetch(WEB_APP_URL, {
             method: 'POST',
             mode: 'cors',
             redirect: 'follow',
-            headers: {
-                'Content-Type': 'text/plain;charset=utf-8',
-            },
-            body: JSON.stringify(payload),
+            body: formData,
         });
 
         if (!response.ok) {

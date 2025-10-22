@@ -1,12 +1,6 @@
 import React from 'react';
 import type { RaterStats, ScoutLevel } from '../types.ts';
 
-const MusicNoteIcon: React.FC<{className?: string}> = ({className}) => (
-    <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-    </svg>
-);
-
 const ScoutIcon: React.FC<{className?: string}> = ({className}) => (
     <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 20 20" fill="currentColor">
         <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
@@ -88,46 +82,58 @@ const RaterStatsDisplay: React.FC<{userName: string, stats: RaterStats, scoutLev
 }
 
 const Header: React.FC<HeaderProps> = ({ venueName, userName, raterStats, scoutLevels, onChangeDetails, onLogout }) => {
-  return (
-    <header className="text-center animate-fade-in relative">
-        <div className="flex items-center justify-center gap-4">
-            <MusicNoteIcon className="w-10 h-10 text-brand-primary" />
-            <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-white">
-                Rate <span className="text-brand-primary">Performers</span>
-            </h1>
-        </div>
-        
-        <div className="absolute top-0 right-0 flex items-center gap-2">
-            {onChangeDetails && (
-                <button 
-                    onClick={onChangeDetails}
-                    className="text-sm text-gray-400 hover:text-white bg-gray-800/50 px-3 py-1 rounded-md transition-colors"
-                    aria-label="Change rater or venue"
-                >
-                    Change
-                </button>
-            )}
-            {onLogout && (
-                 <button 
-                    onClick={onLogout}
-                    className="text-sm text-red-400 hover:text-red-300 bg-red-900/30 px-3 py-1 rounded-md transition-colors"
-                    aria-label="Log out and reset session"
-                >
-                    Log Out
-                </button>
-            )}
-        </div>
+    return (
+        <header className="text-center animate-fade-in relative">
+             <div className="mb-8">
+                <h1 className="font-extrabold">
+                    <span className="block text-4xl sm:text-5xl tracking-tighter">
+                        <span className="text-blue-500">UK</span> <span className="text-red-500">MUSICIANS</span>
+                    </span>
+                    <span className="block text-3xl sm:text-4xl tracking-tight text-green-500 mt-1">
+                        NETWORK
+                    </span>
+                </h1>
+            </div>
+            
+            <div>
+                <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-white">
+                    Rate The Performances at
+                </h2>
+                {venueName && (
+                    <p className="text-3xl sm:text-4xl font-bold text-brand-primary mt-1">
+                        {venueName}
+                    </p>
+                )}
+            </div>
+            
+            <div className="absolute top-0 right-0 flex items-center gap-2">
+                {onChangeDetails && (
+                    <button 
+                        onClick={onChangeDetails}
+                        className="text-sm text-gray-400 hover:text-white bg-gray-800/50 px-3 py-1 rounded-md transition-colors"
+                        aria-label="Change rater or venue"
+                    >
+                        Change
+                    </button>
+                )}
+                {onLogout && (
+                     <button 
+                        onClick={onLogout}
+                        className="text-sm text-red-400 hover:text-red-300 bg-red-900/30 px-3 py-1 rounded-md transition-colors"
+                        aria-label="Log out and reset session"
+                    >
+                        Log Out
+                    </button>
+                )}
+            </div>
 
-        <div className="mt-4 flex flex-col items-center justify-center gap-4">
-            {raterStats && userName && (
-                <RaterStatsDisplay userName={userName} stats={raterStats} scoutLevels={scoutLevels} />
-            )}
-            <p className="max-w-2xl mx-auto text-lg text-gray-400">
-                {venueName ? `You are rating performances at: ${venueName}` : "Rate the live performances from today's event."}
-            </p>
-        </div>
-    </header>
-  );
+            <div className="mt-6 flex flex-col items-center justify-center gap-4">
+                {raterStats && userName && (
+                    <RaterStatsDisplay userName={userName} stats={raterStats} scoutLevels={scoutLevels} />
+                )}
+            </div>
+        </header>
+    );
 };
 
 export default Header;

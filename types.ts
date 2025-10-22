@@ -3,7 +3,8 @@ export interface Performer {
   name: string;
   bio?: string;
   socialLink?: string;
-  setTime?: string;
+  streamingLink?: string;
+  slot?: number;
 }
 
 export interface Rating {
@@ -23,6 +24,7 @@ export interface LeaderboardEntry {
   socialLink?: string;
   xp?: number;
   xpTrend?: 'UP' | 'DOWN' | 'STABLE';
+  ratingTrend?: 'UP' | 'DOWN' | 'STABLE';
 }
 
 export interface RaterStats {

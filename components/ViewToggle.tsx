@@ -19,7 +19,7 @@ const ViewToggle: React.FC<ViewToggleProps> = ({ viewMode, onChange, disabled = 
         className={`${baseClasses} w-1/2 ${viewMode === 'TODAY' ? activeClasses : inactiveClasses}`}
         aria-pressed={viewMode === 'TODAY'}
       >
-        Today's Leaders
+        Rate Tonight
       </button>
       <button
         onClick={() => !disabled && onChange('ALL_TIME')}

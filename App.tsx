@@ -5,13 +5,12 @@ import Header from './components/Header.tsx';
 import PerformerCard from './components/PerformerCard.tsx';
 import Button from './components/Button.tsx';
 import LoginScreen from './components/LoginScreen.tsx';
-import Leaderboard from './components/Leaderboard.tsx';
+import RunningOrder from './components/RunningOrder.tsx';
 
 type AuthState = 'LOGGED_OUT' | 'CHECKING_TOKEN' | 'LOGGED_IN' | 'TOKEN_ERROR';
 type SubmissionStatus = 'IDLE' | 'AWAITING_CONSENT' | 'GETTING_LOCATION' | 'SUBMITTING';
 type RatingInput = { score: number; tags: string[]; comment: string };
 type SubmissionResult = { success: boolean; pointsEarned: number } | null;
-type ViewMode = 'TODAY' | 'ALL_TIME';
 
 
 const App: React.FC = () => {
@@ -31,16 +30,12 @@ const App: React.FC = () => {
   const [authState, setAuthState] = useState<AuthState>('LOGGED_OUT');
   const [tokenError, setTokenError] = useState<string | null>(null);
   
-  const [leaderboardData, setLeaderboardData] = useState<Record<string, LeaderboardEntry>>({});
-  const [isLeaderboardLoading, setIsLeaderboardLoading] = useState<boolean>(true);
-  
-  const [allTimeLeaderboardData, setAllTimeLeaderboardData] = useState<LeaderboardEntry[]>([]);
-  const [isAllTimeLeaderboardLoading, setIsAllTimeLeaderboardLoading] = useState<boolean>(false);
+  const [todaysStatsMap, setTodaysStatsMap] = useState<Record<string, LeaderboardEntry>>({});
+  const [allTimeStatsMap, setAllTimeStatsMap] = useState<Record<string, LeaderboardEntry>>({});
   
   const [feedbackTags, setFeedbackTags] = useState<{positive: string[], constructive: string[]}>({ positive: [], constructive: [] });
   const [raterStats, setRaterStats] = useState<RaterStats | null>(null);
   const [scoutLevels, setScoutLevels] = useState<ScoutLevel[]>([]);
-  const [viewMode, setViewMode] = useState<ViewMode>('TODAY');
 
 
   // Persists session data to localStorage.
@@ -128,13 +123,21 @@ const App: React.FC = () => {
 
     try {
       setIsLoading(true);
-      setIsLeaderboardLoading(true);
       setError(null);
       
-      const [performersData, existingRatingsData, leaderboardResult, tagsData, raterStatsData, scoutLevelsData] = await Promise.all([
+      const [
+          performersData, 
+          existingRatingsData, 
+          todaysLeaderboardResult, 
+          allTimeLeaderboardResult,
+          tagsData, 
+          raterStatsData, 
+          scoutLevelsData
+      ] = await Promise.all([
           getPerformers(venueName),
           getTodaysRatings(raterEmail, venueName),
           getLeaderboardData(venueName),
+          getAllTimeLeaderboardData(venueName),
           getFeedbackTags(),
           getRaterStats(raterEmail),
           getScoutLevels()
@@ -145,11 +148,17 @@ const App: React.FC = () => {
       setRaterStats(raterStatsData);
       setScoutLevels(scoutLevelsData);
       
-      const leaderboardMap = leaderboardResult.reduce((acc, entry) => {
+      const todaysMap = todaysLeaderboardResult.reduce((acc, entry) => {
         acc[entry.id] = entry;
         return acc;
       }, {} as Record<string, LeaderboardEntry>);
-      setLeaderboardData(leaderboardMap);
+      setTodaysStatsMap(todaysMap);
+      
+      const allTimeMap = allTimeLeaderboardResult.reduce((acc, entry) => {
+        acc[entry.id] = entry;
+        return acc;
+      }, {} as Record<string, LeaderboardEntry>);
+      setAllTimeStatsMap(allTimeMap);
 
       setFeedbackTags(tagsData);
 
@@ -158,7 +167,6 @@ const App: React.FC = () => {
       console.error(err);
     } finally {
       setIsLoading(false);
-      setIsLeaderboardLoading(false);
     }
   }, [venueName, raterEmail]);
 
@@ -167,23 +175,6 @@ const App: React.FC = () => {
       fetchInitialData();
     }
   }, [authState, fetchInitialData, venueName, raterEmail]);
-
-  const handleViewModeChange = useCallback(async (newMode: ViewMode) => {
-    setViewMode(newMode);
-    if (newMode === 'ALL_TIME' && allTimeLeaderboardData.length === 0) {
-        setIsAllTimeLeaderboardLoading(true);
-        try {
-            // Note: The backend will now ignore the venueName for this call and return global stats.
-            const data = await getAllTimeLeaderboardData(venueName || '');
-            setAllTimeLeaderboardData(data);
-        } catch (err) {
-            setError("Could not load all-time stats. Please try again later.");
-            console.error(err);
-        } finally {
-            setIsAllTimeLeaderboardLoading(false);
-        }
-    }
-  }, [venueName, allTimeLeaderboardData.length]);
 
   const handleRatingChange = (performerId: string, newScore: number) => {
     if (existingRatings[performerId]) return;
@@ -245,16 +236,35 @@ const App: React.FC = () => {
       
       setSubmissionResult({ success: true, pointsEarned: pointsEarned });
       
-      // Re-fetch leaderboard and rater stats to show immediate impact
-      getLeaderboardData(venueName).then(leaderboardResult => {
-          const leaderboardMap = leaderboardResult.reduce((acc, entry) => {
+      // Refresh all relevant data to show immediate impact.
+      const refreshData = async () => {
+        try {
+          const [todaysLeaderboardResult, newRaterStats, newAllTimeData] = await Promise.all([
+            getLeaderboardData(venueName),
+            getRaterStats(raterEmail),
+            getAllTimeLeaderboardData(venueName),
+          ]);
+
+          const todaysMap = (todaysLeaderboardResult as LeaderboardEntry[]).reduce((acc, entry) => {
             acc[entry.id] = entry;
             return acc;
           }, {} as Record<string, LeaderboardEntry>);
-          setLeaderboardData(leaderboardMap);
-      }).catch(err => console.error("Failed to refresh leaderboard", err));
+          setTodaysStatsMap(todaysMap);
 
-      getRaterStats(raterEmail).then(setRaterStats);
+          setRaterStats(newRaterStats as RaterStats);
+          
+          const allTimeMap = (newAllTimeData as LeaderboardEntry[]).reduce((acc, entry) => {
+            acc[entry.id] = entry;
+            return acc;
+          }, {} as Record<string, LeaderboardEntry>);
+          setAllTimeStatsMap(allTimeMap);
+
+        } catch (err) {
+          console.error("Failed to refresh data after submission:", err);
+        }
+      };
+      
+      refreshData();
 
       setTimeout(() => setSubmissionResult(null), 5000);
     } catch (err) {
@@ -370,14 +380,6 @@ const App: React.FC = () => {
       }
   }
   
-  const leaderboardValues = viewMode === 'TODAY' ? Object.values(leaderboardData) : allTimeLeaderboardData;
-  const sortedLeaderboard = leaderboardValues.sort((a, b) => {
-      // Both views are now sorted by average rating first, then by rating count as a tie-breaker.
-      if (b.averageRating !== a.averageRating) return b.averageRating - a.averageRating;
-      return b.ratingCount - a.ratingCount;
-  });
-  const maxRatingCount = leaderboardValues.reduce((max, p) => Math.max(max, p.ratingCount), 0);
-
   const renderContent = () => {
     if (error) {
       return (
@@ -401,13 +403,7 @@ const App: React.FC = () => {
         )
     }
 
-    const performerList = viewMode === 'TODAY' ? performers : allTimeLeaderboardData;
-    const dataMap = viewMode === 'TODAY' ? leaderboardData : allTimeLeaderboardData.reduce((acc, entry) => {
-        acc[entry.id] = entry;
-        return acc;
-    }, {} as Record<string, LeaderboardEntry>);
-
-    if (performerList.length === 0 && viewMode === 'TODAY') {
+    if (performers.length === 0) {
         return (
              <div className="text-center p-8 bg-gray-800 rounded-xl shadow-2xl animate-fade-in">
                 <h2 className="text-2xl font-bold text-white mb-2">No Performers Found</h2>
@@ -416,51 +412,65 @@ const App: React.FC = () => {
         )
     }
     
-    if (performerList.length === 0 && viewMode === 'ALL_TIME' && !isAllTimeLeaderboardLoading) {
-        return (
-             <div className="text-center p-8 bg-gray-800 rounded-xl shadow-2xl animate-fade-in">
-                <h2 className="text-2xl font-bold text-white mb-2">No Historical Data</h2>
-                <p className="text-lg text-gray-400">No performers have been rated at {venueName} yet.</p>
-            </div>
-        )
-    }
+    // Sort performers by today's average rating to determine rank
+    const sortedPerformers = [...performers].sort((a, b) => {
+        const statsA = todaysStatsMap[a.id];
+        const statsB = todaysStatsMap[b.id];
+        // Performers without ratings go to the bottom
+        if (!statsA || statsA.averageRating === 0) return 1;
+        if (!statsB || statsB.averageRating === 0) return -1;
+        // Primary sort: average rating descending
+        if (statsB.averageRating !== statsA.averageRating) return statsB.averageRating - statsA.averageRating;
+        // Tie-breaker: rating count descending
+        return statsB.ratingCount - statsA.ratingCount;
+    });
+
+    const maxTodaysRatingCount = Math.max(0, ...Object.values(todaysStatsMap).map(s => s.ratingCount));
+    const maxAllTimeRatingCount = Math.max(0, ...Object.values(allTimeStatsMap).map(s => s.ratingCount));
 
     return (
       <div className="space-y-4">
-        {performerList.map((p, index) => {
-           const performerInfo = viewMode === 'TODAY' ? (p as Performer) : {
-               id: (p as LeaderboardEntry).id,
-               name: (p as LeaderboardEntry).name,
-               bio: (p as LeaderboardEntry).bio,
-               socialLink: (p as LeaderboardEntry).socialLink
+        {sortedPerformers.map((performer, index) => {
+           const isRated = !!existingRatings[performer.id];
+           const currentRatingInput = ratings[performer.id]?.score || 0;
+           const currentTags = ratings[performer.id]?.tags || [];
+           const currentComment = ratings[performer.id]?.comment || '';
+
+           const todaysStats = todaysStatsMap[performer.id];
+           const allTimeStats = allTimeStatsMap[performer.id];
+
+           // A performer might not have all-time stats yet if they are brand new
+           const defaultAllTimeStats: LeaderboardEntry = {
+                id: performer.id, name: performer.name, averageRating: 0, ratingCount: 0, commentCount: 0, xp: 0,
            };
 
-           const isRated = viewMode === 'TODAY' ? !!existingRatings[performerInfo.id] : true;
-           const currentRating = viewMode === 'TODAY' ? (existingRatings[performerInfo.id] || ratings[performerInfo.id]?.score || 0) : (dataMap[performerInfo.id]?.averageRating || 0);
-           const currentTags = ratings[performerInfo.id]?.tags || [];
-           const currentComment = ratings[performerInfo.id]?.comment || '';
-           const leaderboardInfo = dataMap[performerInfo.id];
-           
            return (
-              <div key={performerInfo.id} className="animate-slide-in-bottom" style={{ animationDelay: `${index * 100}ms`}}>
+              <div key={performer.id} id={`performer-${performer.id}`} className="animate-slide-in-bottom scroll-mt-24" style={{ animationDelay: `${index * 100}ms`}}>
                 <PerformerCard
-                  performer={performerInfo}
-                  rating={currentRating}
-                  onRatingChange={(rating) => handleRatingChange(performerInfo.id, rating)}
+                  performer={performer}
+                  rank={index}
+                  
+                  // Rating Input
+                  ratingInput={currentRatingInput}
+                  onRatingChange={(rating) => handleRatingChange(performer.id, rating)}
                   isRated={isRated}
+                  
+                  // Feedback Input
                   selectedTags={currentTags}
-                  onFeedbackChange={(tags) => handleFeedbackChange(performerInfo.id, tags)}
+                  onFeedbackChange={(tags) => handleFeedbackChange(performer.id, tags)}
                   comment={currentComment}
-                  onCommentChange={(comment) => handleCommentChange(performerInfo.id, comment)}
-                  ratingCount={leaderboardInfo?.ratingCount ?? 0}
-                  commentCount={leaderboardInfo?.commentCount ?? 0}
-                  maxRatingCount={maxRatingCount}
-                  xp={leaderboardInfo?.xp}
-                  xpTrend={leaderboardInfo?.xpTrend}
+                  onCommentChange={(comment) => handleCommentChange(performer.id, comment)}
+                  
+                  // Stats
+                  todaysStats={todaysStats}
+                  allTimeStats={allTimeStats || defaultAllTimeStats}
+                  maxTodaysRatingCount={maxTodaysRatingCount}
+                  maxAllTimeRatingCount={maxAllTimeRatingCount}
+
+                  // Other
                   positiveTags={feedbackTags.positive}
                   constructiveTags={feedbackTags.constructive}
                   venueName={venueName || ''}
-                  viewMode={viewMode}
                 />
               </div>
             );
@@ -471,7 +481,7 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-900 font-sans p-4 sm:p-8">
-      <div className="max-w-7xl mx-auto">
+      <div className="max-w-4xl mx-auto">
         <Header 
             venueName={venueName} 
             userName={firstName} 
@@ -481,37 +491,22 @@ const App: React.FC = () => {
             onLogout={handleLogout} 
         />
         <main className="mt-12">
-
-          {/* Leaderboard Section */}
-          { authState === 'LOGGED_IN' && (
+          
+          {!isLoading && !error && !submissionResult && performers.length > 0 && (
             <>
-              <div className="border-t border-gray-700"></div>
-              <div className="mt-8">
-                <Leaderboard 
-                    data={sortedLeaderboard} 
-                    isLoading={viewMode === 'TODAY' ? isLeaderboardLoading : isAllTimeLeaderboardLoading} 
-                    maxRatingCount={maxRatingCount} 
-                    venueName={venueName || ''}
-                    viewMode={viewMode}
-                    onViewModeChange={handleViewModeChange}
-                />
+              <RunningOrder performers={performers} />
+              <div className="text-center mb-8">
+                  <h2 className="text-2xl sm:text-3xl font-bold text-white">
+                      Tonight's <span className="text-brand-primary">Leaderboard</span> & Rating Sheet
+                  </h2>
+                  <p className="text-gray-400 mt-2">Rate performers to see the leaderboard update in real-time.</p>
               </div>
-            </>
-          )}
-
-          {/* Performer List Section */}
-          {!isLoading && !error && !submissionResult && viewMode === 'TODAY' && performers.length > 0 && (
-            <>
-              <div className="border-t border-gray-700"></div>
-              <h2 className="text-2xl sm:text-3xl font-bold text-center mt-8 mb-6 text-white">
-                All of Tonight's <span className="text-brand-primary">Performers</span>
-              </h2>
             </>
           )}
           
           {renderContent()}
 
-          {!isLoading && !error && !submissionResult && viewMode === 'TODAY' && performers.length > 0 && (
+          {!isLoading && !error && !submissionResult && performers.length > 0 && (
             <footer className="mt-12 text-center animate-fade-in">
               <p className="mb-4 text-gray-400">{ratedCount} of {totalPerformers - Object.keys(existingRatings).length} new performers rated.</p>
               <Button onClick={handleInitialSubmit} disabled={ratedCount === 0 || submissionStatus !== 'IDLE'}>

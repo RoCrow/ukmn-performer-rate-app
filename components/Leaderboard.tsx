@@ -21,23 +21,27 @@ const WandIcon: React.FC<{className?: string}> = ({className}) => (
     </svg>
 );
 
-const LightningBoltIcon: React.FC<{className?: string}> = ({className}) => (
+const SparklesIcon: React.FC<{className?: string}> = ({className}) => (
     <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 20 20" fill="currentColor">
-      <path d="M11 3a1 1 0 00-2 0v5H4a1 1 0 00-.82 1.573l7 10a1 1 0 001.64 0l7-10A1 1 0 0016 8h-5V3z" />
+      <path fillRule="evenodd" d="M5 2a1 1 0 00-1 1v1.586l-1.293 1.293a1 1 0 101.414 1.414L5 6.414V8a1 1 0 102 0V6.414l.879.879a1 1 0 101.414-1.414L8 4.586V3a1 1 0 10-2 0v.586L5.293 2.707A1 1 0 005 2zm10 0a1 1 0 00-1 1v1.586l-1.293 1.293a1 1 0 101.414 1.414L15 6.414V8a1 1 0 102 0V6.414l.879.879a1 1 0 101.414-1.414L18 4.586V3a1 1 0 10-2 0v.586l-.707-.707A1 1 0 0015 2zm-5 6a1 1 0 00-1 1v1.586l-1.293 1.293a1 1 0 101.414 1.414L10 11.414V13a1 1 0 102 0v-1.586l.879.879a1 1 0 101.414-1.414L13 9.586V9a1 1 0 00-1-1h-2z" clipRule="evenodd" />
     </svg>
 );
 
-// Fix: Use React.ComponentProps<'svg'> to ensure all SVG attributes including 'title' are correctly typed.
-const ArrowUpIcon: React.FC<React.ComponentProps<'svg'>> = (props) => (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" {...props}>
+// FIX: Explicitly define `title` prop on SVG components to avoid TypeScript errors
+// and render a `<title>` element for accessibility.
+const ArrowUpIcon: React.FC<React.SVGProps<SVGSVGElement> & { title?: string }> = ({ title, ...rest }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" {...rest}>
+    {title && <title>{title}</title>}
     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.707-11.293a1 1 0 00-1.414 0l-3 3a1 1 0 001.414 1.414L9 9.414V13a1 1 0 102 0V9.414l1.293 1.293a1 1 0 001.414-1.414l-3-3z" clipRule="evenodd" />
   </svg>
 );
 
-// Fix: Use React.ComponentProps<'svg'> to ensure all SVG attributes including 'title' are correctly typed.
-const ArrowDownIcon: React.FC<React.ComponentProps<'svg'>> = (props) => (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" {...props}>
-    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-.707-6.707a1 1 0 001.414 0l3-3a1 1 0 00-1.414-1.414L11 8.586V5a1 1 0 10-2 0v3.586L7.707 7.293a1 1 0 00-1.414 1.414l3 3z" clipRule="evenodd" />
+// FIX: Explicitly define `title` prop on SVG components to avoid TypeScript errors
+// and render a `<title>` element for accessibility.
+const ArrowDownIcon: React.FC<React.SVGProps<SVGSVGElement> & { title?: string }> = ({ title, ...rest }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" {...rest}>
+    {title && <title>{title}</title>}
+    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-5.707l1 1 1-1a1 1 0 111.414 1.414l-2.5 2.5a1 1 0 01-1.414 0l-2.5-2.5a1 1 0 111.414-1.414l1 1V7a1 1 0 112 0v5.293z" clipRule="evenodd" />
   </svg>
 );
 
@@ -99,7 +103,7 @@ const LeaderboardCard: React.FC<LeaderboardCardProps> = ({ entry, rank, maxRatin
   const [isSummaryLoading, setIsSummaryLoading] = useState<boolean>(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
   
-  const { name, averageRating, ratingCount, commentCount, bio, socialLink, xp, xpTrend } = entry;
+  const { name, averageRating, ratingCount, commentCount, bio, socialLink, xp, xpTrend, ratingTrend } = entry;
   const styles = rankDetails[rank] || { cardClasses: 'bg-gray-700/50 border-gray-600' };
 
   const handleAnalyzeFeedback = async () => {
@@ -135,10 +139,24 @@ const LeaderboardCard: React.FC<LeaderboardCardProps> = ({ entry, rank, maxRatin
         return <ArrowUpIcon className="w-4 h-4 text-green-400" title={title} />;
     }
     if (xpTrend === 'DOWN') {
-        return <ArrowDownIcon className="w-4 h-4 text-blue-400" title={title} />;
+        return <ArrowDownIcon className="w-4 h-4 text-red-400" title={title} />;
     }
     return null;
   };
+
+  const RatingTrendIndicator = () => {
+      const title = viewMode === 'TODAY' 
+        ? "Today's rating vs. historical average"
+        : "All-time rating vs. previous value";
+
+      if (ratingTrend === 'UP') {
+          return <ArrowUpIcon className="w-5 h-5 text-green-400" title={title} />;
+      }
+      if (ratingTrend === 'DOWN') {
+          return <ArrowDownIcon className="w-5 h-5 text-red-400" title={title} />;
+      }
+      return <div className="w-5 h-5"></div>; // Placeholder for alignment
+  }
 
   return (
     <div className={`p-4 rounded-lg flex flex-col gap-3 border transition-all transform hover:scale-[1.02] ${styles.cardClasses}`}>
@@ -150,7 +168,7 @@ const LeaderboardCard: React.FC<LeaderboardCardProps> = ({ entry, rank, maxRatin
             <p className="font-bold text-white text-lg truncate" title={name}>{name}</p>
             {typeof xp === 'number' && xp > 0 && (
                 <div className="mt-1 flex items-center gap-2 text-xs font-bold text-sky-300/90">
-                    <LightningBoltIcon className="w-3.5 h-3.5" />
+                    <SparklesIcon className="w-3.5 h-3.5" />
                     <span>{xp.toLocaleString()} XP</span>
                     <XPTrendIndicator />
                 </div>
@@ -181,6 +199,7 @@ const LeaderboardCard: React.FC<LeaderboardCardProps> = ({ entry, rank, maxRatin
           </div>
         </div>
         <div className="text-2xl font-bold text-brand-accent flex items-center gap-1 flex-shrink-0">
+          <RatingTrendIndicator />
           {averageRating.toFixed(1)}
           <span className="text-yellow-400 text-base">★</span>
         </div>
@@ -189,7 +208,8 @@ const LeaderboardCard: React.FC<LeaderboardCardProps> = ({ entry, rank, maxRatin
       {/* Hype Meter */}
       {ratingCount > 0 && (
           <div className="pl-16">
-              <HypeMeter count={ratingCount} maxCount={maxRatingCount} isLeaderboard={true} />
+              {/* FIX: Add missing 'title' prop to HypeMeter component call. */}
+              <HypeMeter title={viewMode === 'TODAY' ? 'Hype Score Today' : 'Hype Score All Time'} count={ratingCount} maxCount={maxRatingCount} isLeaderboard={true} />
           </div>
       )}
 
@@ -265,12 +285,12 @@ const LeaderboardSkeleton: React.FC = () => (
 
 const Leaderboard: React.FC<LeaderboardProps> = ({ data, isLoading, maxRatingCount, venueName, viewMode, onViewModeChange }) => {
   const title = viewMode === 'TODAY' 
-    ? <>Tonight's <span className="text-brand-primary">Leaders</span></>
-    : <>All-Time <span className="text-brand-primary">Stats</span></>;
+    ? <>Tonight's <span className="text-brand-primary">Leaderboard</span></>
+    : <>All-Time <span className="text-brand-primary">Leaderboard</span></>;
   
   const description = viewMode === 'TODAY' 
-    ? "Top performers based on tonight's ratings."
-    : `Top performers playing ${venueName} today, ranked by their all-time average rating.`;
+    ? "Top performers based on the average of all ratings submitted today."
+    : "Global top performers ranked by their career average rating.";
 
   const renderContent = () => {
     if (isLoading) {
@@ -279,7 +299,7 @@ const Leaderboard: React.FC<LeaderboardProps> = ({ data, isLoading, maxRatingCou
     if (data.length === 0) {
       return (
         <div className="bg-gray-800 text-center p-8 rounded-xl border border-gray-700">
-            <p className="text-gray-400">No ratings submitted yet for this venue.</p>
+            <p className="text-gray-400">No ratings submitted yet for this venue today.</p>
             <p className="text-white mt-1">Be the first to rate a performer to get the leaderboard started!</p>
         </div>
       );
