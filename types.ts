@@ -5,6 +5,7 @@ export interface Performer {
   socialLink?: string;
   streamingLink?: string;
   slot?: number;
+  image?: string;
 }
 
 export interface Rating {

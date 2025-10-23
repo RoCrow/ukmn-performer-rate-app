@@ -27,8 +27,6 @@ const SparklesIcon: React.FC<{className?: string}> = ({className}) => (
     </svg>
 );
 
-// FIX: Explicitly define `title` prop on SVG components to avoid TypeScript errors
-// and render a `<title>` element for accessibility.
 const ArrowUpIcon: React.FC<React.SVGProps<SVGSVGElement> & { title?: string }> = ({ title, ...rest }) => (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" {...rest}>
     {title && <title>{title}</title>}
@@ -36,8 +34,6 @@ const ArrowUpIcon: React.FC<React.SVGProps<SVGSVGElement> & { title?: string }> 
   </svg>
 );
 
-// FIX: Explicitly define `title` prop on SVG components to avoid TypeScript errors
-// and render a `<title>` element for accessibility.
 const ArrowDownIcon: React.FC<React.SVGProps<SVGSVGElement> & { title?: string }> = ({ title, ...rest }) => (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" {...rest}>
     {title && <title>{title}</title>}
@@ -208,7 +204,6 @@ const LeaderboardCard: React.FC<LeaderboardCardProps> = ({ entry, rank, maxRatin
       {/* Hype Meter */}
       {ratingCount > 0 && (
           <div className="pl-16">
-              {/* FIX: Add missing 'title' prop to HypeMeter component call. */}
               <HypeMeter title={viewMode === 'TODAY' ? 'Hype Score Today' : 'Hype Score All Time'} count={ratingCount} maxCount={maxRatingCount} isLeaderboard={true} />
           </div>
       )}

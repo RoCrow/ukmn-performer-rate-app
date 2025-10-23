@@ -1,5 +1,3 @@
-
-
 import React, { useState, Fragment } from 'react';
 import type { Performer, LeaderboardEntry } from '../types.ts';
 import StarRating from './StarRating.tsx';
@@ -37,15 +35,12 @@ interface PerformerCardProps {
 const rankDetails = [
   { // 1st Place - Gold/Green
     badgeClasses: 'bg-green-500 border-green-300 text-white',
-    text: '1st',
   },
   { // 2nd Place - Silver/Blue
     badgeClasses: 'bg-sky-500 border-sky-300 text-white',
-    text: '2nd',
   },
   { // 3rd Place - Bronze/Orange
     badgeClasses: 'bg-orange-500 border-orange-400 text-white',
-    text: '3rd',
   }
 ];
 
@@ -62,8 +57,6 @@ const SparklesIcon: React.FC<{className?: string}> = ({className}) => (
     </svg>
 );
 
-// FIX: Explicitly define `title` prop on SVG components to avoid TypeScript errors
-// and render a `<title>` element for accessibility.
 const ArrowUpIcon: React.FC<React.SVGProps<SVGSVGElement> & { title?: string }> = ({ title, ...rest }) => (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" {...rest}>
     {title && <title>{title}</title>}
@@ -71,8 +64,6 @@ const ArrowUpIcon: React.FC<React.SVGProps<SVGSVGElement> & { title?: string }> 
   </svg>
 );
 
-// FIX: Explicitly define `title` prop on SVG components to avoid TypeScript errors
-// and render a `<title>` element for accessibility.
 const ArrowDownIcon: React.FC<React.SVGProps<SVGSVGElement> & { title?: string }> = ({ title, ...rest }) => (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" {...rest}>
     {title && <title>{title}</title>}
@@ -98,13 +89,27 @@ const ChevronDownIcon: React.FC<{className?: string}> = ({className}) => (
     </svg>
 );
 
+// Helper function for ordinal numbers (e.g., 1st, 2nd, 3rd, 4th)
+const getOrdinal = (n: number) => {
+    const s = ["th", "st", "nd", "rd"];
+    const v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+};
+
 const RankBadge: React.FC<{ rank: number }> = ({ rank }) => {
+  const displayRank = rank + 1;
   const details = rankDetails[rank];
-  if (!details) return null;
+  
+  const badgeText = getOrdinal(displayRank);
+  
+  // A stylish gray for ranks 4 and above
+  const defaultBadgeClasses = 'bg-gray-600 border-gray-400 text-white';
+
+  const badgeClasses = details ? details.badgeClasses : defaultBadgeClasses;
 
   return (
-    <div className={`absolute -top-4 -left-4 w-12 h-12 rounded-full flex items-center justify-center border-2 shadow-lg ${details.badgeClasses}`}>
-      <span className="text-lg font-extrabold">{details.text}</span>
+    <div className={`absolute -top-4 -left-4 w-12 h-12 rounded-full flex items-center justify-center border-2 shadow-lg ${badgeClasses}`}>
+      <span className="text-lg font-extrabold">{badgeText}</span>
     </div>
   );
 };
@@ -133,6 +138,7 @@ const PerformerCard: React.FC<PerformerCardProps> = ({
   const [isSummaryVisible, setIsSummaryVisible] = useState<boolean>(false);
   const [isSummaryLoading, setIsSummaryLoading] = useState<boolean>(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
 
   const handleAnalyzeFeedback = async () => {
     setIsSummaryLoading(true);
@@ -168,184 +174,213 @@ const PerformerCard: React.FC<PerformerCardProps> = ({
   };
   
   return (
-    <div className={`
-      relative rounded-lg p-4 sm:p-6 flex flex-col items-center gap-4 
-      border shadow-md transition-all duration-300 
-      bg-gray-800 border-gray-700
-    `}>
-        {rank < 3 && <RankBadge rank={rank} />}
+    <>
+        <div className={`
+        relative rounded-lg p-4 sm:p-6 flex flex-col items-center gap-4 
+        border shadow-md transition-all duration-300 
+        bg-gray-800 border-gray-700
+        `}>
+            <RankBadge rank={rank} />
+            
+            {performer.image && (
+                <button
+                    onClick={() => setIsLightboxOpen(true)}
+                    className="absolute top-4 right-4 w-16 h-16 rounded-full border-4 border-gray-700 hover:border-brand-primary transition-all duration-300 transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-brand-primary"
+                    aria-label={`View larger image for ${performer.name}`}
+                >
+                    <img src={performer.image} alt={performer.name} className="w-full h-full object-cover rounded-full" />
+                </button>
+            )}
 
-        <div className="w-full flex flex-col gap-4">
-            {/* Top part: Name, Bio/Social links, XP */}
-            <div className="text-center sm:text-left">
-                <h3 className="text-xl font-bold text-white">{performer.name}</h3>
-                {typeof allTimeStats.xp === 'number' && (
-                    <div className="mt-1 flex items-center justify-center sm:justify-start gap-2 text-sm font-bold text-sky-400">
-                        <SparklesIcon className="w-4 h-4" />
-                        <span>{allTimeStats.xp.toLocaleString()} All-Time XP</span>
-                        <TrendIndicator trend={allTimeStats.xpTrend} title="XP trend over the last week" />
-                    </div>
-                )}
-                {(performer.bio || performer.socialLink || performer.streamingLink) && (
-                    <div className="mt-2 text-sm">
-                        {performer.bio && (
-                            <>
-                                <button 
-                                    onClick={() => setIsBioVisible(!isBioVisible)}
-                                    className="text-gray-300 hover:text-white transition-colors"
-                                    aria-expanded={isBioVisible}
-                                >
-                                    {isBioVisible ? 'Hide Bio' : 'Show Bio'}
-                                </button>
-                                {(performer.socialLink || performer.streamingLink) && <span className="text-gray-600 mx-2">|</span>}
-                            </>
-                        )}
-                        {performer.socialLink && (
-                            <>
+
+            <div className="w-full flex flex-col gap-4">
+                {/* Top part: Name, Bio/Social links, XP */}
+                <div className="text-center sm:text-left pr-20">
+                    <h3 className="text-xl font-bold text-white">{performer.name}</h3>
+                    {typeof allTimeStats.xp === 'number' && (
+                        <div className="mt-1 flex items-center justify-center sm:justify-start gap-2 text-sm font-bold text-sky-400">
+                            <SparklesIcon className="w-4 h-4" />
+                            <span>{allTimeStats.xp.toLocaleString()} All-Time XP</span>
+                            <TrendIndicator trend={allTimeStats.xpTrend} title="XP trend over the last week" />
+                        </div>
+                    )}
+                    {(performer.bio || performer.socialLink || performer.streamingLink) && (
+                        <div className="mt-2 text-sm">
+                            {performer.bio && (
+                                <>
+                                    <button 
+                                        onClick={() => setIsBioVisible(!isBioVisible)}
+                                        className="text-gray-300 hover:text-white transition-colors"
+                                        aria-expanded={isBioVisible}
+                                    >
+                                        {isBioVisible ? 'Hide Bio' : 'Show Bio'}
+                                    </button>
+                                    {(performer.socialLink || performer.streamingLink) && <span className="text-gray-600 mx-2">|</span>}
+                                </>
+                            )}
+                            {performer.socialLink && (
+                                <>
+                                    <a 
+                                        href={performer.socialLink} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 hover:underline"
+                                    >
+                                        Socials <ExternalLinkIcon />
+                                    </a>
+                                    {performer.streamingLink && <span className="text-gray-600 mx-2">|</span>}
+                                </>
+                            )}
+                            {performer.streamingLink && (
                                 <a 
-                                    href={performer.socialLink} 
+                                    href={performer.streamingLink} 
                                     target="_blank" 
                                     rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 hover:underline"
+                                    className="inline-flex items-center gap-1 text-green-400 hover:text-green-300 hover:underline"
                                 >
-                                    Socials <ExternalLinkIcon />
+                                    Stream <StreamIcon />
                                 </a>
-                                {performer.streamingLink && <span className="text-gray-600 mx-2">|</span>}
+                            )}
+                        </div>
+                    )}
+                </div>
+                
+                {isBioVisible && performer.bio && (
+                    <div className="w-full pt-4 border-t border-gray-700/50 animate-fade-in">
+                        <p className="text-gray-300 whitespace-pre-wrap">{performer.bio}</p>
+                    </div>
+                )}
+
+                {/* Ratings Section */}
+                <div className="w-full pt-4 border-t border-gray-700/50 flex flex-col sm:flex-row gap-4 items-center justify-around text-center">
+                    <div className="flex-1 w-full">
+                        <h4 className="text-sm font-semibold text-gray-400 mb-2">Today's Rating</h4>
+                        {isRated ? (
+                            <div className="text-2xl font-bold text-brand-accent flex items-center justify-center gap-2">
+                                <TrendIndicator trend={todaysStats?.ratingTrend} title="Today's rating vs. historical average" />
+                                <span>{todaysStats?.averageRating.toFixed(1) || '-'}</span>
+                                <span className="text-yellow-400 text-base">★</span>
+                            </div>
+                        ) : (
+                            <>
+                                <StarRating count={5} rating={ratingInput} onRate={onRatingChange} />
+                                <p className="text-xs text-gray-500 font-semibold mt-2">Rate to see today's average (+5 SP)</p>
                             </>
                         )}
-                        {performer.streamingLink && (
-                            <a 
-                                href={performer.streamingLink} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 text-green-400 hover:text-green-300 hover:underline"
-                            >
-                                Stream <StreamIcon />
-                            </a>
+                    </div>
+                    <div className="h-12 w-px bg-gray-700 hidden sm:block"></div>
+                    <div className="flex-1 w-full">
+                        <h4 className="text-sm font-semibold text-gray-400 mb-2">All-Time Rating</h4>
+                        {isRated ? (
+                            <div className="text-2xl font-bold text-brand-accent flex items-center justify-center gap-2">
+                                <TrendIndicator trend={allTimeStats.ratingTrend} title="All-time rating vs. previous value" />
+                                <span>{allTimeStats.averageRating.toFixed(1)}</span>
+                                <span className="text-yellow-400 text-base">★</span>
+                            </div>
+                        ) : (
+                            <div className="min-h-[48px] flex items-center justify-center px-2 bg-gray-900/30 rounded-lg border border-dashed border-gray-700">
+                                <p className="text-xs text-gray-400 font-semibold text-center">Rate performer to reveal their all-time average</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Hype Meters */}
+                <div className="w-full pt-4 border-t border-gray-700/50 space-y-3">
+                    <HypeMeter title="Hype Score Today" count={todaysStats?.ratingCount ?? 0} maxCount={maxTodaysRatingCount} />
+                    <HypeMeter title="Hype Score All Time" count={allTimeStats.ratingCount} maxCount={maxAllTimeRatingCount} />
+                </div>
+
+            </div>
+            
+            <div className="w-full">
+                {!isRated && ratingInput > 0 && (
+                    <div className="w-full mt-6 p-4 space-y-6 bg-brand-primary/10 rounded-lg border border-brand-primary/30 animate-fade-in">
+                        {/* Refactored Tags Section */}
+                        <div>
+                            <h4 className="text-sm font-semibold text-gray-400 mb-1 block text-center">Add feedback tags (optional)</h4>
+                            <p className="text-xs text-gray-500 font-semibold mb-3 text-center">+10 SP for adding tags</p>
+                            <FeedbackTagger
+                                selectedTags={selectedTags}
+                                onSelectionChange={onFeedbackChange}
+                                positiveTags={positiveTags}
+                                constructiveTags={constructiveTags}
+                            />
+                        </div>
+                        
+                        {/* Refactored Comment Section */}
+                        <div>
+                            <label htmlFor={`comment-${performer.id}`} className="text-sm font-semibold text-gray-400 mb-1 block text-center">Add a comment (optional)</label>
+                            <p className="text-xs text-gray-500 font-semibold mb-2 text-center">+5 SP for any comment, +25 SP for detailed feedback (&gt;50 chars)</p>
+                            <textarea
+                                id={`comment-${performer.id}`}
+                                value={comment}
+                                onChange={(e) => onCommentChange(e.target.value)}
+                                placeholder="Specific feedback for the performer..."
+                                className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary"
+                                rows={2}
+                            ></textarea>
+                        </div>
+                    </div>
+                )}
+                
+                {(allTimeStats.commentCount > 0) && (
+                    <div className="w-full pt-4 mt-4 border-t border-gray-700/50">
+                        <button
+                            onClick={handleSummaryToggle}
+                            disabled={isSummaryLoading || !canAnalyze}
+                            title={!canAnalyze ? 'At least two comments are required to generate an AI summary.' : 'Generate an AI-powered summary of feedback'}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold bg-gray-700/80 text-brand-accent rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                        >
+                            {isSummaryLoading ? (
+                                <Fragment>
+                                    <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-brand-accent"></div>
+                                    Analyzing...
+                                </Fragment>
+                            ) : summary ? (
+                                <Fragment>
+                                    {isSummaryVisible ? 'Hide Summary' : 'Show Summary'}
+                                    <ChevronDownIcon className={`w-5 h-5 transition-transform ${isSummaryVisible ? 'rotate-180' : ''}`} />
+                                </Fragment>
+                            ) : (
+                                <Fragment>
+                                    <WandIcon className="w-4 h-4" />
+                                    {`Feedback Summary (${allTimeStats.commentCount} comments)`}
+                                </Fragment>
+                            )}
+                        </button>
+                        
+                        {summaryError && (
+                            <p className="mt-3 text-center text-sm text-red-400 bg-red-900/30 p-2 rounded-md">{summaryError}</p>
+                        )}
+
+                        {isSummaryVisible && summary && (
+                            <div className="mt-4 p-4 bg-gray-900/50 rounded-lg animate-fade-in">
+                                <h4 className="font-bold text-brand-accent mb-2">AI-Powered Feedback Summary</h4>
+                                <div className="text-gray-300 text-sm whitespace-pre-wrap space-y-2">{summary}</div>
+                            </div>
                         )}
                     </div>
                 )}
             </div>
-            
-             {isBioVisible && performer.bio && (
-                 <div className="w-full pt-4 border-t border-gray-700/50 animate-fade-in">
-                    <p className="text-gray-300 whitespace-pre-wrap">{performer.bio}</p>
-                 </div>
-            )}
-
-            {/* Ratings Section */}
-            <div className="w-full pt-4 border-t border-gray-700/50 flex flex-col sm:flex-row gap-4 items-center justify-around text-center">
-                <div className="flex-1 w-full">
-                     <h4 className="text-sm font-semibold text-gray-400 mb-2">Today's Rating</h4>
-                     {isRated ? (
-                        <div className="text-2xl font-bold text-brand-accent flex items-center justify-center gap-2">
-                            <TrendIndicator trend={todaysStats?.ratingTrend} title="Today's rating vs. historical average" />
-                            <span>{todaysStats?.averageRating.toFixed(1) || '-'}</span>
-                             <span className="text-yellow-400 text-base">★</span>
-                        </div>
-                     ) : (
-                        <>
-                            <StarRating count={5} rating={ratingInput} onRate={onRatingChange} />
-                            <p className="text-xs text-gray-500 font-semibold mt-2">Rate to see today's average (+5 SP)</p>
-                        </>
-                     )}
-                </div>
-                <div className="h-12 w-px bg-gray-700 hidden sm:block"></div>
-                <div className="flex-1 w-full">
-                     <h4 className="text-sm font-semibold text-gray-400 mb-2">All-Time Rating</h4>
-                     {isRated ? (
-                        <div className="text-2xl font-bold text-brand-accent flex items-center justify-center gap-2">
-                              <TrendIndicator trend={allTimeStats.ratingTrend} title="All-time rating vs. previous value" />
-                              <span>{allTimeStats.averageRating.toFixed(1)}</span>
-                              <span className="text-yellow-400 text-base">★</span>
-                        </div>
-                     ) : (
-                        <div className="min-h-[48px] flex items-center justify-center px-2 bg-gray-900/30 rounded-lg border border-dashed border-gray-700">
-                            <p className="text-xs text-gray-400 font-semibold text-center">Rate performer to reveal their all-time average</p>
-                        </div>
-                     )}
-                </div>
-            </div>
-
-            {/* Hype Meters */}
-            <div className="w-full pt-4 border-t border-gray-700/50 space-y-3">
-                <HypeMeter title="Hype Score Today" count={todaysStats?.ratingCount ?? 0} maxCount={maxTodaysRatingCount} />
-                <HypeMeter title="Hype Score All Time" count={allTimeStats.ratingCount} maxCount={maxAllTimeRatingCount} />
-            </div>
-
         </div>
         
-        <div className="w-full">
-            {!isRated && ratingInput > 0 && (
-                <div className="w-full pt-4 mt-4 border-t border-gray-700/50 space-y-6">
-                    {/* Refactored Tags Section */}
-                    <div>
-                        <h4 className="text-sm font-semibold text-gray-400 mb-1 block text-center">Add feedback tags (optional)</h4>
-                        <p className="text-xs text-gray-500 font-semibold mb-3 text-center">+10 SP for adding tags</p>
-                        <FeedbackTagger
-                            selectedTags={selectedTags}
-                            onSelectionChange={onFeedbackChange}
-                            positiveTags={positiveTags}
-                            constructiveTags={constructiveTags}
-                        />
-                    </div>
-                    
-                    {/* Refactored Comment Section */}
-                    <div>
-                        <label htmlFor={`comment-${performer.id}`} className="text-sm font-semibold text-gray-400 mb-1 block text-center">Add a comment (optional)</label>
-                        <p className="text-xs text-gray-500 font-semibold mb-2 text-center">+5 SP for any comment, +25 SP for detailed feedback (&gt;50 chars)</p>
-                        <textarea
-                            id={`comment-${performer.id}`}
-                            value={comment}
-                            onChange={(e) => onCommentChange(e.target.value)}
-                            placeholder="Specific feedback for the performer..."
-                            className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary"
-                            rows={2}
-                        ></textarea>
-                    </div>
-                </div>
-            )}
-            
-            {(allTimeStats.commentCount > 0) && (
-                <div className="w-full pt-4 mt-4 border-t border-gray-700/50">
-                    <button
-                        onClick={handleSummaryToggle}
-                        disabled={isSummaryLoading || !canAnalyze}
-                        title={!canAnalyze ? 'At least two comments are required to generate an AI summary.' : 'Generate an AI-powered summary of feedback'}
-                        className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold bg-gray-700/80 text-brand-accent rounded-md hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                    >
-                        {isSummaryLoading ? (
-                            <Fragment>
-                                <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-brand-accent"></div>
-                                Analyzing...
-                            </Fragment>
-                        ) : summary ? (
-                            <Fragment>
-                                {isSummaryVisible ? 'Hide Summary' : 'Show Summary'}
-                                <ChevronDownIcon className={`w-5 h-5 transition-transform ${isSummaryVisible ? 'rotate-180' : ''}`} />
-                            </Fragment>
-                        ) : (
-                            <Fragment>
-                                <WandIcon className="w-4 h-4" />
-                                {`Feedback Summary (${allTimeStats.commentCount} comments)`}
-                            </Fragment>
-                        )}
-                    </button>
-                    
-                    {summaryError && (
-                        <p className="mt-3 text-center text-sm text-red-400 bg-red-900/30 p-2 rounded-md">{summaryError}</p>
-                    )}
-
-                    {isSummaryVisible && summary && (
-                        <div className="mt-4 p-4 bg-gray-900/50 rounded-lg animate-fade-in">
-                            <h4 className="font-bold text-brand-accent mb-2">AI-Powered Feedback Summary</h4>
-                            <div className="text-gray-300 text-sm whitespace-pre-wrap space-y-2">{summary}</div>
-                        </div>
-                    )}
-                </div>
-            )}
-        </div>
-    </div>
+        {isLightboxOpen && performer.image && (
+            <div
+                className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 animate-fade-in"
+                onClick={() => setIsLightboxOpen(false)}
+                aria-modal="true"
+                role="dialog"
+            >
+                <img
+                src={performer.image}
+                alt={`Enlarged view of ${performer.name}`}
+                className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl object-contain"
+                onClick={(e) => e.stopPropagation()} // Prevent closing when clicking the image itself
+                />
+            </div>
+        )}
+    </>
   );
 };
 

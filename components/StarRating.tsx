@@ -44,13 +44,19 @@ const StarRating: React.FC<StarRatingProps> = ({ count, rating, onRate, disabled
     );
   }
   
-  const handleRate = (starValue: number) => {
+  const handleRate = (starValue: number, e: React.MouseEvent<HTMLButtonElement>) => {
+      // On mobile, hover state can get stuck. Reset it on any click to ensure the UI updates correctly.
+      setHoverRating(0);
+      
       // If the user clicks the same star as the current rating, reset it to 0.
       if (starValue === rating) {
           onRate(0);
       } else {
           onRate(starValue);
       }
+      // After handling the rating, remove focus from the button to hide the focus ring.
+      // This is crucial for a clean UI on mobile where focus can persist after a tap.
+      e.currentTarget.blur();
   };
 
   return (
@@ -60,7 +66,7 @@ const StarRating: React.FC<StarRatingProps> = ({ count, rating, onRate, disabled
           key={starValue}
           onMouseEnter={!disabled ? () => setHoverRating(starValue) : undefined}
           onMouseLeave={!disabled ? () => setHoverRating(0) : undefined}
-          onClick={!disabled ? () => handleRate(starValue) : undefined}
+          onClick={!disabled ? (e) => handleRate(starValue, e) : undefined}
           aria-label={disabled ? `Rated ${rating} out of ${count} stars` : `Rate ${starValue} star${starValue > 1 ? 's' : ''}`}
           className={`transition-transform duration-200 ease-in-out ${!disabled ? 'hover:scale-125' : ''} focus:outline-none focus:ring-2 focus:ring-brand-accent rounded-full`}
           disabled={disabled}

@@ -1,8 +1,9 @@
 
+
 import type { Performer, Rating, LeaderboardEntry, RaterStats, ScoutLevel } from '../types.ts';
 
 // The URL for the deployed Google Apps Script. This is the single endpoint for all backend operations.
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbwVzj7Czo4ae1mWFIs2FFkCfF1kyO-5IwJUkT2g4RQiUCgiRO0nOA64k9ysOex6CFjI/exec';
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzvZgjQjU2T7gMgrsf802GTev696LAaroJrHifMUKoe9tCs2CJBjCgh6o4BAcNfcgm9vA/exec';
 
 interface SubmitRatingsPayload {
     action: 'submitRatings';
@@ -15,20 +16,36 @@ interface SubmitRatingsPayload {
     longitude?: number;
 }
 
+export interface PerformerRegistrationData {
+    firstName: string;
+    lastName: string;
+    performingName: string;
+    email: string;
+    countryCode: string;
+    mobile: string;
+    bio?: string;
+    socialLink?: string;
+    streamingLink?: string;
+    imageBase64: string;
+    imageFileName: string;
+    imageMimeType: string;
+}
+
+
 // Helper function to handle all API requests to the Google Apps Script
 const postToWebApp = async (payload: object) => {
-    // This new implementation uses URLSearchParams to send the payload.
-    // This method is more robust against the common CORS/redirect issues
-    // that can occur when using fetch with Google Apps Script web apps.
-    const formData = new URLSearchParams();
-    formData.append('payload', JSON.stringify(payload));
-
+    // This implementation sends a raw JSON string with a 'text/plain' content type.
+    // This is a robust method to avoid CORS preflight issues with Google Apps Script,
+    // which is the likely cause of a "Failed to fetch" error.
     try {
         const response = await fetch(WEB_APP_URL, {
             method: 'POST',
             mode: 'cors',
             redirect: 'follow',
-            body: formData,
+            headers: {
+                'Content-Type': 'text/plain;charset=utf-8',
+            },
+            body: JSON.stringify(payload),
         });
 
         if (!response.ok) {
@@ -64,6 +81,14 @@ const postToWebApp = async (payload: object) => {
         throw error; // Re-throw the original or constructed error
     }
 };
+
+export const loginOrCreateRater = async (email: string, firstName: string, lastName: string): Promise<{message: string}> => {
+    return await postToWebApp({ action: 'loginOrCreateRater', email, firstName, lastName });
+};
+
+export const registerPerformer = async (data: PerformerRegistrationData): Promise<{message: string}> => {
+    return await postToWebApp({ action: 'registerPerformer', ...data });
+}
 
 export const getScoutLevels = async (): Promise<ScoutLevel[]> => {
     const result = await postToWebApp({ action: 'getScoutLevels' });
@@ -196,9 +221,9 @@ export const runDiagnostics = async (): Promise<any> => {
 
 const getMockPerformers = (): Promise<Performer[]> => {
     const mockPerformers: Performer[] = [
-      { id: '1', name: 'The Sonic Weavers (Sample)' },
-      { id: '2', name: 'DJ Electra (Sample)' },
-      { id: '3', name: 'Luna Hart (Sample)' },
+      { id: '1', name: 'The Sonic Weavers (Sample)', image: 'https://placehold.co/400x400/6d28d9/ede9fe/png?text=SW' },
+      { id: '2', name: 'DJ Electra (Sample)', image: 'https://placehold.co/400x400/f59e0b/1e1b4b/png?text=DE' },
+      { id: '3', name: 'Luna Hart (Sample)', image: 'https://placehold.co/400x400/10b981/111827/png?text=LH' },
     ];
     return new Promise((resolve) => {
         setTimeout(() => {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Button from './Button.tsx';
-import { requestLoginLink, getVenuesForToday, runDiagnostics } from '../services/performerService.ts';
+import RegistrationForm from './RegistrationForm.tsx';
+import { requestLoginLink, getVenuesForToday, runDiagnostics, loginOrCreateRater } from '../services/performerService.ts';
 
 interface LoginScreenProps {
   initialError?: string | null;
@@ -11,6 +12,7 @@ interface LoginScreenProps {
   initialLastName?: string | null;
 }
 
+type ViewMode = 'LOGIN' | 'REGISTER';
 type LoginState = 'IDLE' | 'SENDING' | 'SENT' | 'ERROR';
 type DiagnosticData = {
     today: string;
@@ -33,6 +35,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
     initialFirstName,
     initialLastName 
 }) => {
+  const [viewMode, setViewMode] = useState<ViewMode>('LOGIN');
   const [email, setEmail] = useState('');
   const [venue, setVenue] = useState('');
   const [firstName, setFirstName] = useState('');
@@ -104,8 +107,10 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const normalizedEmail = email.trim().toLowerCase();
+    const trimmedFirstName = firstName.trim();
+    const trimmedLastName = lastName.trim();
 
-    if (!normalizedEmail || !venue.trim() || !firstName.trim() || !lastName.trim()) {
+    if (!normalizedEmail || !venue.trim() || !trimmedFirstName || !trimmedLastName) {
       setError('All fields are required.');
       setLoginState('ERROR');
       return;
@@ -122,6 +127,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
     }
     
     setError(null);
+    setLoginState('SENDING'); // Set loading state for all paths initially
 
     // --- LOGIC FOR SUBMISSION ---
 
@@ -129,17 +135,22 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
     // Set to 'false' to restore the original magic link functionality.
     const TEMPORARY_BYPASS_ENABLED = true;
 
-    if (TEMPORARY_BYPASS_ENABLED || (isChangingDetails && onDetailsChanged)) {
-        // Path 1: Bypass email (for testing or when changing details)
-        if (onDetailsChanged) {
-            onDetailsChanged({ email: normalizedEmail, venue, firstName, lastName });
+    if (TEMPORARY_BYPASS_ENABLED || isChangingDetails) {
+        // Path 1: Bypass email - ensure user record exists before proceeding.
+        try {
+            await loginOrCreateRater(normalizedEmail, trimmedFirstName, trimmedLastName);
+            if (onDetailsChanged) {
+                onDetailsChanged({ email: normalizedEmail, venue, firstName: trimmedFirstName, lastName: trimmedLastName });
+            }
+        } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+            setError(`Login failed: ${errorMessage}`);
+            setLoginState('ERROR');
         }
-        return;
     } else {
         // Path 2: Original magic link flow for new logins
-        setLoginState('SENDING');
         try {
-            await requestLoginLink(normalizedEmail, venue, firstName, lastName);
+            await requestLoginLink(normalizedEmail, venue, trimmedFirstName, trimmedLastName);
             setLoginState('SENT');
         } catch(err) {
             const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
@@ -201,140 +212,162 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
     return null;
   }
 
+  const renderLoginForm = () => (
+    <>
+      <div className="text-center mb-8">
+          <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-white">
+              Rate <span className="text-brand-primary">Performers</span>
+          </h1>
+        <p className="mt-4 text-lg text-gray-400">
+          {isChangingDetails ? 'Select a new venue to continue rating.' : "Your feedback helps discover and develop the UK's next top artists. Enter your details to get started."}
+        </p>
+      </div>
+      
+      <form 
+          onSubmit={handleSubmit}
+          className="bg-gray-800 p-8 rounded-xl shadow-2xl space-y-6"
+      >
+          <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex-1">
+                  <label htmlFor="firstName" className="block text-sm font-medium text-gray-300 mb-2">
+                  First Name
+                  </label>
+                  <input
+                  type="text"
+                  id="firstName"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  placeholder="Jane"
+                  className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:opacity-70 disabled:cursor-not-allowed"
+                  aria-required="true"
+                  disabled={loginState === 'SENDING'}
+                  />
+              </div>
+              <div className="flex-1">
+                  <label htmlFor="lastName" className="block text-sm font-medium text-gray-300 mb-2">
+                  Last Name
+                  </label>
+                  <input
+                  type="text"
+                  id="lastName"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  placeholder="Doe"
+                  className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:opacity-70 disabled:cursor-not-allowed"
+                  aria-required="true"
+                  disabled={loginState === 'SENDING'}
+                  />
+              </div>
+          </div>
+
+        <div>
+          <label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-2">
+            Your Email
+          </label>
+          <input
+            type="email"
+            id="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@example.com"
+            className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:opacity-70 disabled:cursor-not-allowed"
+            aria-required="true"
+            disabled={loginState === 'SENDING' || isChangingDetails}
+          />
+        </div>
+
+        <div>
+          <label htmlFor="venue" className="block text-sm font-medium text-gray-300 mb-2">
+            Venue Name
+          </label>
+          <select
+            id="venue"
+            value={venue}
+            onChange={(e) => setVenue(e.target.value)}
+            className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-required="true"
+            disabled={isVenuesLoading || venues.length === 0}
+          >
+              {isVenuesLoading && <option>Loading venues...</option>}
+              {!isVenuesLoading && venues.length === 0 && <option>No events scheduled for today</option>}
+              {venues.map(v => <option key={v} value={v}>{v}</option>)}
+          </select>
+          {venuesError && (
+              <div className="text-sm text-red-400 mt-2 text-center">
+                  <p>{venuesError}</p>
+                  <button type="button" onClick={handleRunDiagnostics} disabled={isDiagnosing} className="mt-2 text-xs text-brand-primary hover:underline disabled:text-gray-500">
+                      {isDiagnosing ? 'Running Test...' : 'Run Diagnostic Test'}
+                  </button>
+              </div>
+          )}
+          {renderDiagnostics()}
+        </div>
+      
+        {!isChangingDetails && (
+          <div className="flex items-start">
+              <div className="flex items-center h-5">
+              <input
+                  id="privacy"
+                  name="privacy"
+                  type="checkbox"
+                  checked={privacyAccepted}
+                  onChange={(e) => setPrivacyAccepted(e.target.checked)}
+                  className="focus:ring-brand-primary h-4 w-4 text-brand-primary border-gray-600 rounded bg-gray-700"
+                  aria-required="true"
+              />
+              </div>
+              <div className="ml-3 text-sm">
+              <label htmlFor="privacy" className="font-medium text-gray-300">
+                  I agree to the{' '}
+                  <a 
+                      href="https://ukmusiciansnetwork.com/privacy" 
+                      className="text-brand-primary hover:underline" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                  >
+                  Privacy Policy
+                  </a>
+              </label>
+              </div>
+          </div>
+        )}
+
+
+        {(loginState === 'ERROR' && error) && (
+          <p className="text-red-400 bg-red-900/30 text-center p-3 rounded-md">
+            {error}
+          </p>
+        )}
+
+        <div className="pt-2">
+            <Button 
+                type="submit" 
+                className="w-full" 
+                disabled={isVenuesLoading || venues.length === 0 || !privacyAccepted || loginState === 'SENDING'}
+            >
+                {loginState === 'SENDING' 
+                    ? 'Please wait...' 
+                    : (isChangingDetails ? 'Update & Continue' : 'Start Rating')}
+            </Button>
+        </div>
+
+        <div className="text-center pt-4">
+            <button
+                type="button"
+                onClick={() => setViewMode('REGISTER')}
+                className="text-sm text-brand-primary hover:underline"
+            >
+                Are you a performer? Register your profile here.
+            </button>
+        </div>
+      </form>
+    </>
+  );
+
   return (
     <div className="min-h-screen bg-gray-900 flex flex-col justify-center items-center p-4 font-sans animate-fade-in">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-            <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-white">
-                Rate <span className="text-brand-primary">Performers</span>
-            </h1>
-          <p className="mt-4 text-lg text-gray-400">
-            {isChangingDetails ? 'Select a new venue to continue rating.' : "Your feedback helps discover and develop the UK's next top artists. Enter your details to get started."}
-          </p>
-        </div>
-        
-        <form 
-            onSubmit={handleSubmit}
-            className="bg-gray-800 p-8 rounded-xl shadow-2xl space-y-6"
-        >
-            <div className="flex flex-col sm:flex-row gap-4">
-                <div className="flex-1">
-                    <label htmlFor="firstName" className="block text-sm font-medium text-gray-300 mb-2">
-                    First Name
-                    </label>
-                    <input
-                    type="text"
-                    id="firstName"
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    placeholder="Jane"
-                    className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:opacity-70 disabled:cursor-not-allowed"
-                    aria-required="true"
-                    disabled={loginState === 'SENDING' || isChangingDetails}
-                    />
-                </div>
-                <div className="flex-1">
-                    <label htmlFor="lastName" className="block text-sm font-medium text-gray-300 mb-2">
-                    Last Name
-                    </label>
-                    <input
-                    type="text"
-                    id="lastName"
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                    placeholder="Doe"
-                    className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:opacity-70 disabled:cursor-not-allowed"
-                    aria-required="true"
-                    disabled={loginState === 'SENDING' || isChangingDetails}
-                    />
-                </div>
-            </div>
-
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-2">
-              Your Email
-            </label>
-            <input
-              type="email"
-              id="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:opacity-70 disabled:cursor-not-allowed"
-              aria-required="true"
-              disabled={loginState === 'SENDING' || isChangingDetails}
-            />
-          </div>
-
-          <div>
-            <label htmlFor="venue" className="block text-sm font-medium text-gray-300 mb-2">
-              Venue Name
-            </label>
-            <select
-              id="venue"
-              value={venue}
-              onChange={(e) => setVenue(e.target.value)}
-              className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-primary disabled:opacity-50 disabled:cursor-not-allowed"
-              aria-required="true"
-              disabled={isVenuesLoading || venues.length === 0}
-            >
-                {isVenuesLoading && <option>Loading venues...</option>}
-                {!isVenuesLoading && venues.length === 0 && <option>No events scheduled for today</option>}
-                {venues.map(v => <option key={v} value={v}>{v}</option>)}
-            </select>
-            {venuesError && (
-                <div className="text-sm text-red-400 mt-2 text-center">
-                    <p>{venuesError}</p>
-                    <button type="button" onClick={handleRunDiagnostics} disabled={isDiagnosing} className="mt-2 text-xs text-brand-primary hover:underline disabled:text-gray-500">
-                        {isDiagnosing ? 'Running Test...' : 'Run Diagnostic Test'}
-                    </button>
-                </div>
-            )}
-            {renderDiagnostics()}
-          </div>
-        
-          {!isChangingDetails && (
-            <div className="flex items-start">
-                <div className="flex items-center h-5">
-                <input
-                    id="privacy"
-                    name="privacy"
-                    type="checkbox"
-                    checked={privacyAccepted}
-                    onChange={(e) => setPrivacyAccepted(e.target.checked)}
-                    className="focus:ring-brand-primary h-4 w-4 text-brand-primary border-gray-600 rounded bg-gray-700"
-                    aria-required="true"
-                />
-                </div>
-                <div className="ml-3 text-sm">
-                <label htmlFor="privacy" className="font-medium text-gray-300">
-                    I agree to the{' '}
-                    <a 
-                        href="https://ukmusiciansnetwork.com/privacy" 
-                        className="text-brand-primary hover:underline" 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                    >
-                    Privacy Policy
-                    </a>
-                </label>
-                </div>
-            </div>
-          )}
-
-
-          {(loginState === 'ERROR' && error) && (
-            <p className="text-red-400 bg-red-900/30 text-center p-3 rounded-md">
-              {error}
-            </p>
-          )}
-
-          <div className="pt-2">
-            <Button type="submit" className="w-full" disabled={isVenuesLoading || venues.length === 0 || !privacyAccepted}>
-              {isChangingDetails ? 'Update & Continue' : 'Start Rating'}
-            </Button>
-          </div>
-        </form>
+        {viewMode === 'LOGIN' ? renderLoginForm() : <RegistrationForm onSwitchToLogin={() => setViewMode('LOGIN')} />}
       </div>
     </div>
   );

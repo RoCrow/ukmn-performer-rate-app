@@ -351,17 +351,31 @@ const App: React.FC = () => {
             <div className="bg-gray-800 p-8 rounded-xl shadow-2xl max-w-lg text-center">
                 <h2 className="text-2xl font-bold text-brand-accent mb-4">Location Verification Required</h2>
                 <div className="text-gray-300 space-y-4 text-left">
-                    <p>To ensure all ratings are genuine and prevent fraud, we need to quickly verify you're at the venue.</p>
-                    <p>
-                        <strong className="text-white">This is a one-time check for this submission only.</strong> We do not track your location continuously or store it after today.
-                    </p>
+                    <p>Your ratings are incredibly valuable—they help artists improve and unlock real-world opportunities, including paid gigs.</p>
+                    <p>To ensure performers get the right chances, it's vital that all feedback comes from people who have <strong className="text-white">actually seen them perform at this event.</strong></p>
+                    <p>That's why we need to quickly verify you're at the venue. We store your long and lat coordinates to let you know about future events nearby. <strong className="text-white">We do not track your device's movement.</strong></p>
+                    
+                    <div className="bg-gray-700/50 p-4 rounded-lg border border-gray-600">
+                        <p className="font-semibold text-white">Your Browser Will Ask for Permission:</p>
+                        <p className="text-sm mt-2 text-gray-300">After you click "Verify," your device will show its own prompt. You have two main choices:</p>
+                        <ul className="list-disc list-inside mt-2 space-y-2">
+                            <li>
+                                <strong className="text-red-500">Recommended:</strong> Select <strong className="text-emerald-400">"Allow while using the app"</strong> or <strong className="text-emerald-400">"Allow"</strong>.
+                                <span className="block text-xs text-gray-400">Grant permission just once for today's session—much easier!</span>
+                            </li>
+                            <li>
+                                Select <strong className="text-amber-400">"Only this time"</strong>.
+                                <span className="block text-xs text-gray-400">You will need to approve your location every time you submit ratings.</span>
+                            </li>
+                        </ul>
+                    </div>
                 </div>
                 <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
-                     <Button onClick={() => setSubmissionStatus('IDLE')} className="bg-gray-600 hover:bg-gray-500 w-full sm:w-auto">
+                     <button onClick={() => setSubmissionStatus('IDLE')} className="bg-gray-600 text-white font-bold py-3 px-8 rounded-full hover:bg-gray-500 transition-colors w-full sm:w-auto">
                         Cancel
-                     </Button>
-                     <Button onClick={handleConsentAndSubmit} className="w-full sm:w-auto">
-                        Verify Location & Submit
+                     </button>
+                     <Button onClick={handleConsentAndSubmit} className="bg-green-600 hover:bg-green-700 focus:ring-green-500 w-full sm:w-auto">
+                        Verify & Submit
                      </Button>
                 </div>
             </div>
@@ -481,21 +495,23 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 font-sans p-4 sm:p-8">
-      <div className="max-w-4xl mx-auto">
-        <Header 
-            venueName={venueName} 
-            userName={firstName} 
-            raterStats={raterStats}
-            scoutLevels={scoutLevels}
-            onChangeDetails={handleChangeDetails} 
-            onLogout={handleLogout} 
-        />
-        <main className="mt-12 pb-32">
+    <div className="min-h-screen bg-gray-900 font-sans">
+      <Header
+          userName={firstName}
+          venueName={venueName}
+          raterStats={raterStats}
+          scoutLevels={scoutLevels}
+          onChangeDetails={handleChangeDetails}
+          onLogout={handleLogout}
+      />
+      <div className="max-w-4xl mx-auto pt-24 p-4 sm:p-8">
+        <main className="pb-32">
           
           {!isLoading && !error && !submissionResult && performers.length > 0 && (
             <>
-              <RunningOrder performers={performers} />
+              <div className="mt-8">
+                <RunningOrder performers={performers} />
+              </div>
               <div className="text-center mb-8">
                   <h2 className="text-2xl sm:text-3xl font-bold text-white">
                       Tonight's <span className="text-brand-primary">Leaderboard</span> & Rating Sheet
