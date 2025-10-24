@@ -1,17 +1,26 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import type { Performer, Rating, LeaderboardEntry, RaterStats, ScoutLevel } from './types.ts';
-import { getPerformers, submitRatings, loginWithToken, getTodaysRatings, getLeaderboardData, getAllTimeLeaderboardData, getFeedbackTags, getRaterStats, getScoutLevels } from './services/performerService.ts';
+import { getPerformers, submitRatings, getTodaysRatings, getLeaderboardData, getAllTimeLeaderboardData, getFeedbackTags, getRaterStats, getScoutLevels, loginByEmail } from './services/performerService.ts';
+import type { PerformerRegistrationData } from './services/performerService.ts';
 import Header from './components/Header.tsx';
 import PerformerCard from './components/PerformerCard.tsx';
 import Button from './components/Button.tsx';
 import LoginScreen from './components/LoginScreen.tsx';
 import RunningOrder from './components/RunningOrder.tsx';
+import ProfilePage from './components/ProfilePage.tsx';
+import PerformerLoginRegisterPage from './components/PerformerLoginRegisterPage.tsx';
 
-type AuthState = 'LOGGED_OUT' | 'CHECKING_TOKEN' | 'LOGGED_IN' | 'TOKEN_ERROR';
+
+type AuthState = 'LOGGED_OUT' | 'LOGGING_IN' | 'LOGGED_IN';
 type SubmissionStatus = 'IDLE' | 'AWAITING_CONSENT' | 'GETTING_LOCATION' | 'SUBMITTING';
+type Page = 'LOGIN' | 'REGISTER';
+export type UserType = 'audience' | 'performer' | null;
+export type ActiveView = 'PROFILE' | 'RATING';
+
 type RatingInput = { score: number; tags: string[]; comment: string };
 type SubmissionResult = { success: boolean; pointsEarned: number } | null;
+export type ProfileData = PerformerRegistrationData & { image: string; id: string; };
 
 
 const App: React.FC = () => {
@@ -29,7 +38,7 @@ const App: React.FC = () => {
   const [firstName, setFirstName] = useState<string | null>(null);
   const [lastName, setLastName] = useState<string | null>(null);
   const [authState, setAuthState] = useState<AuthState>('LOGGED_OUT');
-  const [tokenError, setTokenError] = useState<string | null>(null);
+  const [loginError, setLoginError] = useState<string | null>(null);
   
   const [todaysStatsMap, setTodaysStatsMap] = useState<Record<string, LeaderboardEntry>>({});
   const [allTimeStatsMap, setAllTimeStatsMap] = useState<Record<string, LeaderboardEntry>>({});
@@ -37,6 +46,11 @@ const App: React.FC = () => {
   const [feedbackTags, setFeedbackTags] = useState<{positive: string[], constructive: string[]}>({ positive: [], constructive: [] });
   const [raterStats, setRaterStats] = useState<RaterStats | null>(null);
   const [scoutLevels, setScoutLevels] = useState<ScoutLevel[]>([]);
+  
+  const [activePerformerProfile, setActivePerformerProfile] = useState<ProfileData | null>(null);
+  const [currentPage, setCurrentPage] = useState<Page>('LOGIN');
+  const [activeView, setActiveView] = useState<ActiveView>('RATING');
+  const [isSelectingVenue, setIsSelectingVenue] = useState<boolean>(false);
 
 
   // Persists session data to localStorage.
@@ -65,6 +79,62 @@ const App: React.FC = () => {
       setLastName(details.lastName);
       updateSession(details, isNewLogin);
       setAuthState('LOGGED_IN');
+      
+      if (isSelectingVenue) {
+          setIsSelectingVenue(false);
+      }
+      setActiveView('RATING');
+  };
+
+  const handlePerformerLoginOrRegisterSuccess = (performerData: ProfileData) => {
+      setActivePerformerProfile(performerData);
+      // Also establish them as a potential rater to enable switching views.
+      setRaterEmail(performerData.email);
+      setFirstName(performerData.firstName);
+      setLastName(performerData.lastName);
+      setAuthState('LOGGED_IN');
+      setActiveView('PROFILE');
+  };
+
+  const handlePerformerUpdate = (updatedData: ProfileData) => {
+      setActivePerformerProfile(updatedData);
+  };
+
+  const handleNavigate = (page: Page) => {
+    handleLogout(); // Clear any existing session before switching login types
+    setCurrentPage(page);
+  };
+
+  const handleViewChange = (view: ActiveView) => {
+    // If a performer tries to rate without a venue, show the venue selection screen first.
+    if (view === 'RATING' && userType === 'performer' && !venueName) {
+      setIsSelectingVenue(true);
+    } else {
+      setActiveView(view);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  const handleLogin = async (email: string) => {
+    setAuthState('LOGGING_IN');
+    setLoginError(null);
+    try {
+        const { user, userType } = await loginByEmail(email);
+        if (userType === 'performer') {
+            handlePerformerLoginOrRegisterSuccess(user);
+        } else {
+            // Logged in as audience, now they need to pick a venue
+            setRaterEmail(user.email);
+            setFirstName(user.firstName);
+            setLastName(user.lastName);
+            setAuthState('LOGGED_IN');
+            setIsSelectingVenue(true); // Direct them to venue selection
+        }
+    } catch (err) {
+        const message = err instanceof Error ? err.message : "An unknown error occurred.";
+        setLoginError(message);
+        setAuthState('LOGGED_OUT');
+    }
   };
 
 
@@ -78,6 +148,7 @@ const App: React.FC = () => {
       if (expiry && new Date().getTime() > expiry) {
         // Session expired, remove it and stay logged out
         localStorage.removeItem('performer-rater-session');
+        setCurrentPage('LOGIN');
       } else {
         // Session is valid, log the user in
         setRaterEmail(email);
@@ -85,36 +156,8 @@ const App: React.FC = () => {
         setFirstName(firstName);
         setLastName(lastName);
         setAuthState('LOGGED_IN');
-        return; // Stop further execution
+        setActiveView('RATING');
       }
-    }
-
-    // If no session, check for a login token in the URL
-    const urlParams = new URLSearchParams(window.location.search);
-    const token = urlParams.get('token');
-
-    if (token) {
-      setAuthState('CHECKING_TOKEN');
-      loginWithToken(token)
-        .then(({ email, venue, firstName, lastName }) => {
-          setRaterEmail(email);
-          setVenueName(venue);
-          setFirstName(firstName);
-          setLastName(lastName);
-          setAuthState('LOGGED_IN');
-          
-          // Persist session with an expiry timestamp (midnight)
-          updateSession({ email, venue, firstName, lastName }, true);
-
-          // Clean the URL
-          window.history.replaceState({}, document.title, window.location.pathname);
-        })
-        .catch(err => {
-          setAuthState('TOKEN_ERROR');
-          setTokenError(err.message || 'The login link is invalid or has expired.');
-          // Clean the URL
-          window.history.replaceState({}, document.title, window.location.pathname);
-        });
     }
   }, []);
 
@@ -303,99 +346,54 @@ const App: React.FC = () => {
   };
   
   const handleChangeDetails = () => {
-    // We keep firstName, lastName, and email in state.
-    // We only clear the venue-specific data and go back to the login screen.
     setVenueName(null);
     setPerformers([]);
     setRatings({});
     setExistingRatings({});
-    setAuthState('LOGGED_OUT');
-    setIsLoading(true);
+    setAuthState('LOGGED_IN'); // Stay logged in, but go to venue selection
+    setIsSelectingVenue(true);
   };
 
   const handleLogout = () => {
+    // Clear rater-specific state
+    setRaterEmail(null);
+    setFirstName(null);
+    setLastName(null);
+    setVenueName(null);
+    setAuthState('LOGGED_OUT');
+    
+    // Clear performer-specific state
+    setActivePerformerProfile(null);
+    
+    // Clear data
+    setPerformers([]);
+    setRatings({});
+    setExistingRatings({});
+    
+    // Reset to default login page and view
+    setCurrentPage('LOGIN');
+    setActiveView('RATING');
+    setIsSelectingVenue(false);
+    setLoginError(null);
+
     localStorage.removeItem('performer-rater-session');
-    window.location.reload();
   };
 
   const ratedCount = Object.keys(ratings).filter(id => ratings[id] && ratings[id].score > 0).length;
   const totalPerformers = performers.length;
 
-  if (authState === 'LOGGED_OUT' || authState === 'TOKEN_ERROR') {
-    // If raterEmail exists, it means we are in the "change details" flow.
-    // If not, it's a fresh login.
-    const isChanging = !!raterEmail && authState !== 'TOKEN_ERROR';
-    return (
-        <LoginScreen
-            initialError={tokenError}
-            isChangingDetails={isChanging}
-            onDetailsChanged={handleDetailsChanged}
-            initialEmail={raterEmail}
-            initialFirstName={firstName}
-            initialLastName={lastName}
-        />
-    );
-  }
+  const userType: UserType = activePerformerProfile ? 'performer' : (authState === 'LOGGED_IN' ? 'audience' : null);
 
-  if (authState === 'CHECKING_TOKEN' || (authState === 'LOGGED_IN' && isLoading)) {
-     return (
-        <div className="min-h-screen bg-gray-900 flex flex-col justify-center items-center p-4">
-            <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-brand-primary"></div>
-            <p className="mt-4 text-gray-400">{authState === 'CHECKING_TOKEN' ? 'Verifying login...' : `Loading performers for ${venueName}...`}</p>
-        </div>
-     );
-  }
-
-    const LocationConsentScreen = () => (
-        <div className="fixed inset-0 bg-gray-900/90 backdrop-blur-sm flex flex-col justify-center items-center p-4 z-50 animate-fade-in">
-            <div className="bg-gray-800 p-8 rounded-xl shadow-2xl max-w-lg text-center">
-                <h2 className="text-2xl font-bold text-brand-accent mb-4">Location Verification Required</h2>
-                <div className="text-gray-300 space-y-4 text-left">
-                    <p>Your ratings are incredibly valuable—they help artists improve and unlock real-world opportunities, including paid gigs.</p>
-                    <p>To ensure performers get the right chances, it's vital that all feedback comes from people who have <strong className="text-white">actually seen them perform at this event.</strong></p>
-                    <p>That's why we need to quickly verify you're at the venue. We store your long and lat coordinates to let you know about future events nearby. <strong className="text-white">We do not track your device's movement.</strong></p>
-                    
-                    <div className="bg-gray-700/50 p-4 rounded-lg border border-gray-600">
-                        <p className="font-semibold text-white">Your Browser Will Ask for Permission:</p>
-                        <p className="text-sm mt-2 text-gray-300">After you click "Verify," your device will show its own prompt. You have two main choices:</p>
-                        <ul className="list-disc list-inside mt-2 space-y-2">
-                            <li>
-                                <strong className="text-red-500">Recommended:</strong> Select <strong className="text-emerald-400">"Allow while using the app"</strong> or <strong className="text-emerald-400">"Allow"</strong>.
-                                <span className="block text-xs text-gray-400">Grant permission just once for today's session—much easier!</span>
-                            </li>
-                            <li>
-                                Select <strong className="text-amber-400">"Only this time"</strong>.
-                                <span className="block text-xs text-gray-400">You will need to approve your location every time you submit ratings.</span>
-                            </li>
-                        </ul>
-                    </div>
-                </div>
-                <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
-                     <button onClick={() => setSubmissionStatus('IDLE')} className="bg-gray-600 text-white font-bold py-3 px-8 rounded-full hover:bg-gray-500 transition-colors w-full sm:w-auto">
-                        Cancel
-                     </button>
-                     <Button onClick={handleConsentAndSubmit} className="bg-green-600 hover:bg-green-700 focus:ring-green-500 w-full sm:w-auto">
-                        Verify & Submit
-                     </Button>
-                </div>
-            </div>
-        </div>
-    );
-
-  if (submissionStatus === 'AWAITING_CONSENT') {
-      return <LocationConsentScreen />;
-  }
-
-
-  const getButtonText = () => {
-      switch(submissionStatus) {
-          case 'GETTING_LOCATION': return 'Verifying Location...';
-          case 'SUBMITTING': return 'Submitting...';
-          default: return 'Submit All Ratings';
-      }
-  }
-  
-  const renderContent = () => {
+  const renderRatingContent = () => {
+    if (isLoading) {
+       return (
+          <div className="flex flex-col justify-center items-center p-4 min-h-[50vh]">
+              <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-brand-primary"></div>
+              <p className="mt-4 text-gray-400">Loading performers...</p>
+          </div>
+       );
+    }
+    
     if (error) {
       return (
         <div className="text-center text-red-400 bg-red-900/20 p-4 rounded-lg">
@@ -422,21 +420,17 @@ const App: React.FC = () => {
         return (
              <div className="text-center p-8 bg-gray-800 rounded-xl shadow-2xl animate-fade-in">
                 <h2 className="text-2xl font-bold text-white mb-2">No Performers Found</h2>
-                <p className="text-lg text-gray-400">There are no performers listed for {venueName} at this time.</p>
+                <p className="text-lg text-gray-400">There are no performers listed for this venue at this time.</p>
             </div>
         )
     }
     
-    // Sort performers by today's average rating to determine rank
     const sortedPerformers = [...performers].sort((a, b) => {
         const statsA = todaysStatsMap[a.id];
         const statsB = todaysStatsMap[b.id];
-        // Performers without ratings go to the bottom
         if (!statsA || statsA.averageRating === 0) return 1;
         if (!statsB || statsB.averageRating === 0) return -1;
-        // Primary sort: average rating descending
         if (statsB.averageRating !== statsA.averageRating) return statsB.averageRating - statsA.averageRating;
-        // Tie-breaker: rating count descending
         return statsB.ratingCount - statsA.ratingCount;
     });
 
@@ -450,97 +444,190 @@ const App: React.FC = () => {
            const currentRatingInput = ratings[performer.id]?.score || 0;
            const currentTags = ratings[performer.id]?.tags || [];
            const currentComment = ratings[performer.id]?.comment || '';
-
            const todaysStats = todaysStatsMap[performer.id];
            const allTimeStats = allTimeStatsMap[performer.id];
-
-           // A performer might not have all-time stats yet if they are brand new
-           const defaultAllTimeStats: LeaderboardEntry = {
-                id: performer.id, name: performer.name, averageRating: 0, ratingCount: 0, commentCount: 0, xp: 0,
-           };
+           const defaultAllTimeStats: LeaderboardEntry = { id: performer.id, name: performer.name, averageRating: 0, ratingCount: 0, commentCount: 0, xp: 0 };
 
            return (
               <div key={performer.id} id={`performer-${performer.id}`} className="animate-slide-in-bottom scroll-mt-24" style={{ animationDelay: `${index * 100}ms`}}>
-                <PerformerCard
-                  performer={performer}
-                  rank={index}
-                  
-                  // Rating Input
-                  ratingInput={currentRatingInput}
-                  onRatingChange={(rating) => handleRatingChange(performer.id, rating)}
-                  isRated={isRated}
-                  
-                  // Feedback Input
-                  selectedTags={currentTags}
-                  onFeedbackChange={(tags) => handleFeedbackChange(performer.id, tags)}
-                  comment={currentComment}
-                  onCommentChange={(comment) => handleCommentChange(performer.id, comment)}
-                  
-                  // Stats
-                  todaysStats={todaysStats}
-                  allTimeStats={allTimeStats || defaultAllTimeStats}
-                  maxTodaysRatingCount={maxTodaysRatingCount}
-                  maxAllTimeRatingCount={maxAllTimeRatingCount}
-
-                  // Other
-                  positiveTags={feedbackTags.positive}
-                  constructiveTags={feedbackTags.constructive}
-                  venueName={venueName || ''}
-                />
+                <PerformerCard performer={performer} rank={index} ratingInput={currentRatingInput} onRatingChange={(rating) => handleRatingChange(performer.id, rating)} isRated={isRated} selectedTags={currentTags} onFeedbackChange={(tags) => handleFeedbackChange(performer.id, tags)} comment={currentComment} onCommentChange={(comment) => handleCommentChange(performer.id, comment)} todaysStats={todaysStats} allTimeStats={allTimeStats || defaultAllTimeStats} maxTodaysRatingCount={maxTodaysRatingCount} maxAllTimeRatingCount={maxAllTimeRatingCount} positiveTags={feedbackTags.positive} constructiveTags={feedbackTags.constructive} venueName={venueName || ''} />
               </div>
             );
         })}
       </div>
     );
   };
+  
+    const LocationConsentScreen = () => (
+        <div className="fixed inset-0 bg-gray-900/90 backdrop-blur-sm flex flex-col justify-center items-center p-4 z-50 animate-fade-in">
+            <div className="bg-gray-800 p-8 rounded-xl shadow-2xl max-w-lg text-center">
+                <h2 className="text-2xl font-bold text-brand-accent mb-4">Location Verification Required</h2>
+                <div className="text-gray-300 space-y-4 text-left">
+                    <p>Your ratings are incredibly valuable—they help artists improve and unlock real-world opportunities, including paid gigs.</p>
+                    <p>To ensure performers get the right chances, it's vital that all feedback comes from people who have <strong className="text-white">actually seen them perform at this event.</strong></p>
+                    <p>That's why we need to quickly verify you're at the venue. We store your long and lat coordinates to let you know about future events nearby. <strong className="text-white">We do not track your device's movement.</strong></p>
+                    <div className="bg-gray-700/50 p-4 rounded-lg border border-gray-600">
+                        <p className="font-semibold text-white">Your Browser Will Ask for Permission:</p>
+                        <ul className="list-disc list-inside mt-2 space-y-2">
+                            <li><strong className="text-red-500">Recommended:</strong> Select <strong className="text-emerald-400">"Allow while using the app"</strong> or <strong className="text-emerald-400">"Allow"</strong>. <span className="block text-xs text-gray-400">Grant permission just once for today's session—much easier!</span></li>
+                            <li>Select <strong className="text-amber-400">"Only this time"</strong>. <span className="block text-xs text-gray-400">You will need to approve your location every time you submit ratings.</span></li>
+                        </ul>
+                    </div>
+                </div>
+                <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center">
+                     <button onClick={() => setSubmissionStatus('IDLE')} className="bg-gray-600 text-white font-bold py-3 px-8 rounded-full hover:bg-gray-500 transition-colors w-full sm:w-auto">Cancel</button>
+                     <Button onClick={handleConsentAndSubmit} className="bg-green-600 hover:bg-green-700 focus:ring-green-500 w-full sm:w-auto">Verify & Submit</Button>
+                </div>
+            </div>
+        </div>
+    );
+    
+  const getButtonText = () => {
+      switch(submissionStatus) {
+          case 'GETTING_LOCATION': return 'Verifying Location...';
+          case 'SUBMITTING': return 'Submitting...';
+          default: return 'Submit All Ratings';
+      }
+  }
+
+  const renderPage = () => {
+    // Priority 0: An already logged-in user needs to select a venue.
+    if (isSelectingVenue) {
+        return (
+            <div className="flex flex-col items-center p-4">
+                <LoginScreen
+                    mode="CHANGE_VENUE"
+                    onDetailsChanged={handleDetailsChanged}
+                    onSwitchToRegister={() => {}} // Should not be visible in this mode
+                    onLogin={() => {}} // Should not be visible in this mode
+                    initialEmail={raterEmail}
+                    initialFirstName={firstName}
+                    initialLastName={lastName}
+                />
+            </div>
+        );
+    }
+
+    // Priority 1: A user is logged in and has a venue. Use activeView to decide what to render.
+    if (userType) {
+        if (userType === 'performer' && activeView === 'PROFILE' && activePerformerProfile) {
+            return (
+                <div className="flex flex-col items-center p-4">
+                    <ProfilePage 
+                        performer={activePerformerProfile} 
+                        onExit={() => handleViewChange('RATING')}
+                        onUpdate={handlePerformerUpdate}
+                    />
+                </div>
+            );
+        }
+        
+        // Default view for ANY logged-in user (audience, or performer in rating mode) is the rating screen.
+        return (
+            <>
+                <div className="max-w-4xl mx-auto p-4 sm:p-8">
+                    <div className="pb-32">
+                        {!isLoading && !error && !submissionResult && performers.length > 0 && (
+                            <>
+                                <div className="mt-8"><RunningOrder performers={performers} /></div>
+                                <div className="text-center mb-8">
+                                    <h2 className="text-2xl sm:text-3xl font-bold text-white">Tonight's <span className="text-brand-primary">Leaderboard</span> & Rating Sheet</h2>
+                                    <p className="text-gray-400 mt-2">Rate performers to see the leaderboard update in real-time.</p>
+                                </div>
+                            </>
+                        )}
+                        {renderRatingContent()}
+                    </div>
+                </div>
+                {!isLoading && !error && !submissionResult && performers.length > 0 && (
+                    <footer className="fixed bottom-0 left-0 right-0 z-20 p-4 pointer-events-none">
+                        <div className="max-w-lg mx-auto pointer-events-auto flex flex-col items-center gap-3 text-center animate-slide-in-bottom">
+                            <p className="text-sm text-white bg-black/50 backdrop-blur-sm rounded-full px-3 py-1 shadow-lg">{ratedCount} of {totalPerformers - Object.keys(existingRatings).length} new performers rated.</p>
+                            <Button onClick={handleInitialSubmit} disabled={ratedCount === 0 || submissionStatus !== 'IDLE'}>{getButtonText()}</Button>
+                            {submissionError && (<p className="text-red-400 bg-red-900/50 p-3 rounded-lg w-full shadow-lg">{submissionError}</p>)}
+                        </div>
+                    </footer>
+                )}
+            </>
+        );
+    }
+
+    // Priority 2: Checking a login token from email link (kept for compatibility)
+    // Or showing universal login spinner
+    if (authState === 'LOGGING_IN') {
+        return (
+            <div className="flex flex-col justify-center items-center p-4" style={{minHeight: 'calc(100vh - 5rem)'}}>
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-brand-primary"></div>
+                <p className="mt-4 text-gray-400">Logging in...</p>
+            </div>
+        );
+    }
+
+    // Default: Logged out. Show the appropriate page based on currentPage.
+    if (currentPage === 'REGISTER') {
+        return (
+            <div className="flex flex-col items-center p-4">
+                <PerformerLoginRegisterPage 
+                  onLoginOrRegisterSuccess={handlePerformerLoginOrRegisterSuccess} 
+                  onAudienceRegisterSuccess={handleDetailsChanged}
+                  onSwitchToLogin={() => handleNavigate('LOGIN')} 
+                />
+            </div>
+        );
+    }
+    
+    // Default to login page
+    return (
+        <div className="flex flex-col items-center p-4">
+            <LoginScreen
+                mode="LOGIN"
+                initialError={loginError}
+                onLogin={handleLogin}
+                onSwitchToRegister={() => handleNavigate('REGISTER')}
+                onDetailsChanged={() => {}} // Not used in LOGIN mode
+            />
+        </div>
+    );
+  };
+
+  let pageTitle: string | null = null;
+  if (isSelectingVenue) {
+    pageTitle = 'Select a Venue';
+  } else if (userType) {
+      if (activeView === 'PROFILE') {
+          pageTitle = 'Profile';
+      } else {
+          pageTitle = venueName;
+      }
+  } else if (authState === 'LOGGING_IN') {
+      pageTitle = 'Logging In...';
+  } else if (currentPage === 'REGISTER') {
+      pageTitle = 'Registration';
+  } else {
+      pageTitle = 'Login';
+  }
+
+  const userNameToShow = userType === 'performer' ? activePerformerProfile?.performingName : firstName;
 
   return (
     <div className="min-h-screen bg-gray-900 font-sans">
       <Header
-          userName={firstName}
-          venueName={venueName}
+          isLoggedIn={!!userType}
+          userType={userType}
+          userName={userNameToShow}
           raterStats={raterStats}
           scoutLevels={scoutLevels}
           onChangeDetails={handleChangeDetails}
           onLogout={handleLogout}
+          onNavigate={handleNavigate}
+          pageTitle={pageTitle}
+          activeView={activeView}
+          onViewChange={handleViewChange}
       />
-      <div className="max-w-4xl mx-auto pt-24 p-4 sm:p-8">
-        <main className="pb-32">
-          
-          {!isLoading && !error && !submissionResult && performers.length > 0 && (
-            <>
-              <div className="mt-8">
-                <RunningOrder performers={performers} />
-              </div>
-              <div className="text-center mb-8">
-                  <h2 className="text-2xl sm:text-3xl font-bold text-white">
-                      Tonight's <span className="text-brand-primary">Leaderboard</span> & Rating Sheet
-                  </h2>
-                  <p className="text-gray-400 mt-2">Rate performers to see the leaderboard update in real-time.</p>
-              </div>
-            </>
-          )}
-          
-          {renderContent()}
-
-        </main>
-      </div>
-      
-      {!isLoading && !error && !submissionResult && performers.length > 0 && (
-        <footer className="fixed bottom-0 left-0 right-0 z-20 p-4 pointer-events-none">
-          <div className="max-w-lg mx-auto pointer-events-auto flex flex-col items-center gap-3 text-center animate-slide-in-bottom">
-            <p className="text-sm text-white bg-black/50 backdrop-blur-sm rounded-full px-3 py-1 shadow-lg">
-              {ratedCount} of {totalPerformers - Object.keys(existingRatings).length} new performers rated.
-            </p>
-            <Button onClick={handleInitialSubmit} disabled={ratedCount === 0 || submissionStatus !== 'IDLE'}>
-              {getButtonText()}
-            </Button>
-            {submissionError && (
-              <p className="text-red-400 bg-red-900/50 p-3 rounded-lg w-full shadow-lg">{submissionError}</p>
-            )}
-          </div>
-        </footer>
-      )}
+      <main className="pt-20">
+        {renderPage()}
+      </main>
+      {submissionStatus === 'AWAITING_CONSENT' && <LocationConsentScreen />}
     </div>
   );
 };

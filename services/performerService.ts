@@ -1,6 +1,7 @@
 
 
 import type { Performer, Rating, LeaderboardEntry, RaterStats, ScoutLevel } from '../types.ts';
+import type { ProfileData } from '../App.tsx';
 
 // The URL for the deployed Google Apps Script. This is the single endpoint for all backend operations.
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzvZgjQjU2T7gMgrsf802GTev696LAaroJrHifMUKoe9tCs2CJBjCgh6o4BAcNfcgm9vA/exec';
@@ -86,9 +87,39 @@ export const loginOrCreateRater = async (email: string, firstName: string, lastN
     return await postToWebApp({ action: 'loginOrCreateRater', email, firstName, lastName });
 };
 
-export const registerPerformer = async (data: PerformerRegistrationData): Promise<{message: string}> => {
-    return await postToWebApp({ action: 'registerPerformer', ...data });
+export const registerPerformer = async (data: PerformerRegistrationData): Promise<{message: string; userId: string}> => {
+    const result = await postToWebApp({ action: 'registerPerformer', ...data });
+    if (!result.userId) {
+        throw new Error("Registration succeeded but did not return a user ID.");
+    }
+    return result;
 }
+
+export const loginByEmail = async (email: string): Promise<{ user: ProfileData, userType: 'performer' | 'audience' }> => {
+    const result = await postToWebApp({ action: 'loginByEmail', email });
+    if (!result.user || !result.userType) {
+        throw new Error("Login failed: Invalid response from server.");
+    }
+    return result;
+};
+
+
+/*
+export const requestPerformerLoginLink = async (email: string): Promise<void> => {
+    await postToWebApp({ action: 'requestPerformerLoginLink', email });
+};
+*/
+
+export const updatePerformer = async (data: Partial<ProfileData> & { id: string }): Promise<{message: string}> => {
+    // The 'id' property should be mapped to 'userId' for the backend.
+    const { id, ...rest } = data;
+    return await postToWebApp({ action: 'updatePerformer', userId: id, ...rest });
+};
+
+export const requestEmailChange = async (userId: string, newEmail: string): Promise<{message: string}> => {
+    return await postToWebApp({ action: 'requestEmailChange', userId, newEmail });
+};
+
 
 export const getScoutLevels = async (): Promise<ScoutLevel[]> => {
     const result = await postToWebApp({ action: 'getScoutLevels' });

@@ -17,6 +17,8 @@ const DATA_VALIDATION_SHEET_NAME = 'DataValidation';
 
 // --- Token Expiration (in minutes) ---
 const TOKEN_EXPIRATION_MINUTES = 15;
+const EMAIL_CHANGE_TOKEN_EXPIRATION_MINUTES = 60;
+
 
 // --- Gameplay Mechanics ---
 const DAILY_XP_COOLDOWN_PERCENTAGE = 0.05; // 5% daily cooldown
@@ -46,6 +48,11 @@ const API_KEY = PropertiesService.getScriptProperties().getProperty('API_KEY');
 function doGet(e) {
   const action = e && e.parameter && e.parameter.action;
   
+  if (action === 'verifyEmailChange') {
+    const token = e.parameter.token;
+    return handleVerifyEmailChange(token);
+  }
+
   // Test function for diagnostics
   if (action === 'test') {
     return testHttpHeader();
@@ -83,7 +90,11 @@ function doPost(e) {
       case 'getRaterStats': return handleGetRaterStats(payload.raterEmail);
       case 'getScoutLevels': return handleGetScoutLevels();
       case 'registerPerformer': return handleRegisterPerformer(payload);
+      case 'updatePerformer': return handleUpdatePerformer(payload);
+      case 'requestEmailChange': return handleRequestEmailChange(payload);
       case 'loginOrCreateRater': return handleLoginOrCreateRater(payload);
+      case 'loginByEmail': return handleLoginByEmail(payload.email);
+      case 'requestPerformerLoginLink': return handleRequestPerformerLoginLink(payload.email);
       case 'debugDateParsing': return handleDebugDateParsing();
       default: return createErrorResponse(`Unknown action: ${payload.action}`, 400);
     }
@@ -274,6 +285,42 @@ function snapshotWeeklyXP() {
 // UTILITY & RESPONSE FUNCTIONS
 // =================================================================
 
+/**
+ * Finds or creates a nested folder structure.
+ * @param {DriveApp.Folder} root The starting folder (e.g., DriveApp.getRootFolder()).
+ * @param {string[]} pathArray An array of folder names representing the path.
+ * @returns {DriveApp.Folder} The final folder in the path.
+ */
+function getOrCreateNestedFolder(root, pathArray) {
+    let currentFolder = root;
+    for (const folderName of pathArray) {
+        const folders = currentFolder.getFoldersByName(folderName);
+        if (folders.hasNext()) {
+            currentFolder = folders.next();
+        } else {
+            currentFolder = currentFolder.createFolder(folderName);
+        }
+    }
+    return currentFolder;
+}
+
+
+/**
+ * Finds a folder by name within a parent folder, or creates it if it doesn't exist.
+ * @param {DriveApp.Folder} parentFolder The folder to search within.
+ * @param {string} folderName The name of the folder to find or create.
+ * @returns {DriveApp.Folder} The found or newly created folder.
+ */
+function findOrCreateFolder(parentFolder, folderName) {
+    const folders = parentFolder.getFoldersByName(folderName);
+    if (folders.hasNext()) {
+        return folders.next();
+    } else {
+        return parentFolder.createFolder(folderName);
+    }
+}
+
+
 function getHeaderMap(headers) {
   if (!headers || !Array.isArray(headers)) return {};
   return headers.reduce((map, header, index) => {
@@ -316,14 +363,14 @@ function normalizeDate(dateValue) {
             // Handle simple date format like "2024-07-30"
             const parsedDate = new Date(dateValue);
             if (!isNaN(parsedDate)) {
-                 return Utilities.formatDate(parsedDate, timezone, 'yyyy-MM-dd');
+                 return Utilities.formatDate(parsedDate, timezone, "yyyy-MM-dd");
             }
         }
         if (typeof dateValue === 'number' && dateValue > 0) {
             // Handle Google Sheets serial number dates
             const millis = (dateValue - 25569) * 86400000;
             const dateInUTC = new Date(millis);
-            return Utilities.formatDate(dateInUTC, timezone, "yyyy-dd-MM");
+            return Utilities.formatDate(dateInUTC, timezone, "yyyy-MM-dd");
         }
     } catch (e) {
         Logger.log(`Could not normalize date value: '${dateValue}' (type: ${typeof dateValue}). Error: ${e.message}`);
@@ -390,31 +437,55 @@ function handleRegisterPerformer(payload) {
         const headerMap = getHeaderMap(headersRaw);
 
         // Check for essential headers to ensure the sheet is structured correctly
-        const requiredHeaders = ['userid', 'email', 'firstname', 'lastname', 'performingname', 'registrationdate_performer', 'countrycode'];
+        const requiredHeaders = ['userid', 'email', 'firstname', 'lastname', 'performingname', 'registrationdateperformer', 'countrycode'];
         for (const h of requiredHeaders) {
             if (headerMap[h] === undefined) {
                 throw new Error(`Critical header "${h}" is missing from the Users sheet.`);
             }
         }
 
+        const newUserID = Utilities.getUuid();
         let imageUrl = '';
+
         if (payload.imageBase64) {
+            if (!payload.imageMimeType || !payload.imageMimeType.startsWith('image/')) {
+                throw new Error("Invalid file type. Only images are allowed.");
+            }
+            
+            // --- New Scalable & Nested Folder Structure ---
+            const FOLDER_PATH = ['Businesses', 'UK Pub Partner'];
+            const targetRootFolder = getOrCreateNestedFolder(DriveApp.getRootFolder(), FOLDER_PATH);
+            const performerAssetsFolder = findOrCreateFolder(targetRootFolder, 'PerformerAssets');
+
+            const safePerformerNameForFolder = (payload.performingName || 'performer').replace(/[^a-zA-Z0-9_.-]/g, '_');
+            const performerFolderName = `${safePerformerNameForFolder} - ${newUserID}`;
+            const performerFolder = findOrCreateFolder(performerAssetsFolder, performerFolderName);
+            
+            const publicImagesFolder = findOrCreateFolder(performerFolder, 'Public Images');
+            findOrCreateFolder(performerFolder, 'Private Documents'); // Create this for future use
+            
+            // Set permissions for the public folder
+            publicImagesFolder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+            
+            // --- Image Upload Logic ---
             const decodedImage = Utilities.base64Decode(payload.imageBase64);
             const blob = Utilities.newBlob(decodedImage, payload.imageMimeType, payload.imageFileName);
-            let folder = DriveApp.getFoldersByName('PerformerImages').hasNext() ? DriveApp.getFoldersByName('PerformerImages').next() : DriveApp.createFolder('PerformerImages');
-            folder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-            const file = folder.createFile(blob);
-            imageUrl = `https://drive.google.com/uc?export=view&id=${file.getId()}`;
+            
+            const safePerformerName = (payload.performingName || 'performer_image').replace(/[^a-zA-Z0-9_.-]/g, '_');
+            const fileExtension = payload.imageFileName.split('.').pop() || 'jpg';
+            const newFileName = `${safePerformerName}_thumbnail.${fileExtension}`;
+
+            const file = publicImagesFolder.createFile(blob).setName(newFileName);
+            file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); // Explicitly set file permission
+            
+            imageUrl = `https://lh3.googleusercontent.com/d/${file.getId()}`;
         }
         
-        const newUserID = "perf-" + Utilities.getUuid(); // Changed prefix to perf-
         const today = new Date();
         
-        // Dynamically build the new row based on the header map
-        const newRow = new Array(headersRaw.length).fill(''); // Create an empty array of the correct length
-        
+        const newRow = new Array(headersRaw.length).fill('');
         newRow[headerMap['userid']] = newUserID;
-        newRow[headerMap['email']] = payload.email;
+        newRow[headerMap['email']] = payload.email.trim().toLowerCase();
         newRow[headerMap['firstname']] = payload.firstName;
         newRow[headerMap['lastname']] = payload.lastName;
         newRow[headerMap['countrycode']] = payload.countryCode || '';
@@ -425,21 +496,20 @@ function handleRegisterPerformer(payload) {
         newRow[headerMap['sociallink']] = payload.socialLink || '';
         newRow[headerMap['streaminglink']] = payload.streamingLink || '';
         newRow[headerMap['imageurl']] = imageUrl;
-        newRow[headerMap['registrationdate_performer']] = getFormattedDateTime(today);
+        newRow[headerMap['registrationdateperformer']] = getFormattedDateTime(today);
         
         usersSheet.appendRow(newRow);
         
-        // Create corresponding entry in PerformerStats
         const statsHeadersRaw = statsSheet.getRange(1, 1, 1, statsSheet.getLastColumn()).getValues()[0];
         const statsHeaderMap = getHeaderMap(statsHeadersRaw);
-        const newStatsRow = new Array(statsHeadersRaw.length).fill(0); // Default all to 0
+        const newStatsRow = new Array(statsHeadersRaw.length).fill(0);
         newStatsRow[statsHeaderMap['userid']] = newUserID;
         newStatsRow[statsHeaderMap['performername']] = payload.performingName;
         newStatsRow[statsHeaderMap['lastupdated']] = getFormattedDateTime(today);
 
         statsSheet.appendRow(newStatsRow);
         
-        return createSuccessResponse({ message: 'Performer registered successfully.' });
+        return createSuccessResponse({ message: 'Performer registered successfully.', userId: newUserID });
 
     } catch(err) {
         Logger.log(`Registration Error: ${err.message}\nStack: ${err.stack}`);
@@ -449,8 +519,84 @@ function handleRegisterPerformer(payload) {
     }
 }
 
+
+function handleUpdatePerformer(payload) {
+    const { userId } = payload;
+    if (!userId) return createErrorResponse("User ID is required for update.", 400);
+
+    const lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+
+    try {
+        const ss = SpreadsheetApp.getActiveSpreadsheet();
+        const usersSheet = ss.getSheetByName(USERS_SHEET_NAME);
+        if (!usersSheet) throw new Error("Users sheet not found.");
+        
+        const data = usersSheet.getDataRange().getValues();
+        const headersRaw = data.shift();
+        if (!headersRaw) throw new Error("Users sheet is empty or has no headers.");
+        const headerMap = getHeaderMap(headersRaw);
+
+        const userIdIndex = headerMap['userid'];
+        if (userIdIndex === undefined) throw new Error("UserID column not found in Users sheet.");
+
+        const rowIndex = data.findIndex(row => row[userIdIndex] === userId);
+        if (rowIndex === -1) throw new Error("Performer not found.");
+        
+        const sheetRowIndex = rowIndex + 2; // +1 for 1-based index, +1 for header row
+        
+        // Map of payload keys to header keys for updating. Exclude email as it has a separate flow.
+        const updateMap = {
+            firstName: 'firstname',
+            lastName: 'lastname',
+            performingName: 'performingname',
+            countryCode: 'countrycode',
+            mobile: 'mobilenumber',
+            bio: 'bio',
+            socialLink: 'sociallink',
+            streamingLink: 'streaminglink'
+        };
+
+        for (const [payloadKey, headerKey] of Object.entries(updateMap)) {
+            if (payload[payloadKey] !== undefined) {
+                const colIndex = headerMap[headerKey];
+                if (colIndex !== undefined) {
+                    usersSheet.getRange(sheetRowIndex, colIndex + 1).setValue(payload[payloadKey]);
+                }
+            }
+        }
+        
+        // Also update performer name in stats sheet if it changes
+        if (payload.performingName && headerMap['performingname'] !== undefined) {
+            const statsSheet = ss.getSheetByName(PERFORMER_STATS_SHEET_NAME);
+            const statsData = statsSheet.getDataRange().getValues();
+            const statsHeaderRaw = statsData.shift();
+            const statsHeaderMap = getHeaderMap(statsHeaderRaw);
+            const statsUserIdIndex = statsHeaderMap['userid'];
+            const statsNameIndex = statsHeaderMap['performername'];
+            if(statsUserIdIndex !== undefined && statsNameIndex !== undefined) {
+                 const statsRowIndex = statsData.findIndex(row => row[statsUserIdIndex] === userId);
+                 if(statsRowIndex !== -1) {
+                     statsSheet.getRange(statsRowIndex + 2, statsNameIndex + 1).setValue(payload.performingName);
+                 }
+            }
+        }
+        
+        return createSuccessResponse({ message: 'Profile updated successfully.' });
+
+    } catch (err) {
+        Logger.log(`handleUpdatePerformer Error: ${err.message}\nStack: ${err.stack}`);
+        return createErrorResponse(err.message);
+    } finally {
+        lock.releaseLock();
+    }
+}
+
+
 function handleLoginOrCreateRater(payload) {
-  const { email, firstName, lastName } = payload;
+  const email = (payload.email || '').trim().toLowerCase();
+  const { firstName, lastName } = payload;
+
   if (!email || !firstName || !lastName) {
     return createErrorResponse("Missing required fields for rater login/creation.", 400);
   }
@@ -471,14 +617,14 @@ function handleLoginOrCreateRater(payload) {
     const emailIndex = headers['email'];
     if (emailIndex === undefined) throw new Error("Email column not found in Users sheet.");
 
-    const userRow = data.find(row => row[emailIndex] === email);
+    const userRow = data.find(row => row[emailIndex] && row[emailIndex].toLowerCase() === email);
 
     if (userRow) {
       // User already exists, nothing to do.
       return createSuccessResponse({ message: 'Rater already exists.' });
     } else {
       // User does not exist, create them.
-      const userId = "user-" + Utilities.getUuid();
+      const userId = Utilities.getUuid();
       
       const newRow = new Array(headersRaw.length).fill('');
       newRow[headers['userid']] = userId;
@@ -496,6 +642,45 @@ function handleLoginOrCreateRater(payload) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function handleLoginByEmail(email) {
+    if (!email) return createErrorResponse("Email is required.", 400);
+    
+    const userEmail = email.trim().toLowerCase();
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const usersSheet = ss.getSheetByName(USERS_SHEET_NAME);
+    if (!usersSheet) throw new Error("Users sheet not found.");
+
+    const data = usersSheet.getDataRange().getValues();
+    const headersRaw = data.shift();
+    if (!headersRaw) throw new Error("Users sheet is empty or has no headers.");
+    const headerMap = getHeaderMap(headersRaw);
+
+    const emailIndex = headerMap['email'];
+    if (emailIndex === undefined) throw new Error("Email column not found in Users sheet.");
+    
+    const userRow = data.find(row => row[emailIndex] && row[emailIndex].toLowerCase() === userEmail);
+    if (!userRow) throw new Error("No user found with that email address. Please register first.");
+    
+    const performingName = getValueByHeader(userRow, headerMap, 'performingname');
+    const userType = performingName ? 'performer' : 'audience';
+    
+    const userData = {
+        id: getValueByHeader(userRow, headerMap, 'userid'),
+        firstName: getValueByHeader(userRow, headerMap, 'firstname'),
+        lastName: getValueByHeader(userRow, headerMap, 'lastname'),
+        performingName: performingName,
+        email: getValueByHeader(userRow, headerMap, 'email'),
+        countryCode: getValueByHeader(userRow, headerMap, 'countrycode'),
+        mobile: getValueByHeader(userRow, headerMap, 'mobilenumber'),
+        bio: getValueByHeader(userRow, headerMap, 'bio'),
+        socialLink: getValueByHeader(userRow, headerMap, 'sociallink'),
+        streamingLink: getValueByHeader(userRow, headerMap, 'streaminglink'),
+        image: getValueByHeader(userRow, headerMap, 'imageurl')
+    };
+    
+    return createSuccessResponse({ user: userData, userType: userType });
 }
 
 
@@ -558,7 +743,8 @@ function handleGetPerformers(venueName) {
 }
 
 function handleRequestLogin(payload) {
-  const { email, venueName, firstName, lastName } = payload;
+  const email = (payload.email || '').trim().toLowerCase();
+  const { venueName, firstName, lastName } = payload;
   if (!email || !venueName || !firstName || !lastName) {
     return createErrorResponse("Missing required fields.", 400);
   }
@@ -574,19 +760,19 @@ function handleRequestLogin(payload) {
     const headers = getHeaderMap(headersRaw);
     
     const emailIndex = headers['email'];
-    const userRow = data.find(row => row[emailIndex] === email);
+    const userRow = data.find(row => row[emailIndex] && row[emailIndex].toLowerCase() === email);
     let userId;
 
     if (userRow) {
       userId = getValueByHeader(userRow, headers, 'UserID');
     } else {
-      userId = "user-" + Utilities.getUuid();
+      userId = Utilities.getUuid();
       usersSheet.appendRow([userId, email, firstName, lastName, '', '', getFormattedDateTime(new Date())]);
     }
     
     const token = "T" + Utilities.getUuid().replace(/-/g, "");
     const expiry = new Date().getTime() + TOKEN_EXPIRATION_MINUTES * 60 * 1000;
-    PropertiesService.getScriptProperties().setProperty(token, JSON.stringify({ userId, email, venueName, firstName, lastName, expiry }));
+    PropertiesService.getScriptProperties().setProperty(token, JSON.stringify({ userId, email, venueName, firstName, lastName, expiry, type: 'rater' }));
 
     const loginUrl = `${WEB_APP_URL}?token=${token}`;
     MailApp.sendEmail({
@@ -603,6 +789,14 @@ function handleRequestLogin(payload) {
   }
 }
 
+function handleRequestPerformerLoginLink(email) {
+    if (!email) return createErrorResponse("Email is required.", 400);
+     // This is a placeholder for the full magic link implementation
+     // It would find the performer, create a token, store it, and email the link.
+     // For now, it just confirms the action would have been taken.
+    return createSuccessResponse({ message: `A login link would be sent to ${email}.` });
+}
+
 function handleVerifyToken(token) {
   if (!token) return createErrorResponse("No token provided.", 400);
 
@@ -616,6 +810,9 @@ function handleVerifyToken(token) {
   if (new Date().getTime() > tokenData.expiry) {
     return createErrorResponse("Login link has expired.", 401);
   }
+  
+  // Logic could be added here to handle different token 'types' (e.g., 'rater' vs 'performer')
+  // For now, it only handles rater logins.
   
   return createSuccessResponse({
     email: tokenData.email,
@@ -675,7 +872,8 @@ function handleSubmitRatings(payload) {
         const usersHeadersRaw = usersData.shift();
         if (!usersHeadersRaw) throw new Error("Users sheet is empty or missing headers.");
         const usersHeaders = getHeaderMap(usersHeadersRaw);
-        const raterRow = usersData.find(row => getValueByHeader(row, usersHeaders, 'email') === raterEmail);
+        const normalizedRaterEmail = raterEmail.trim().toLowerCase();
+        const raterRow = usersData.find(row => getValueByHeader(row, usersHeaders, 'email').toLowerCase() === normalizedRaterEmail);
         if (!raterRow) throw new Error("Rater not found.");
         const raterId = getValueByHeader(raterRow, usersHeaders, 'userid');
 
@@ -722,7 +920,7 @@ function handleSubmitRatings(payload) {
             raterStatsSheet.getRange(rowIndex, raterStatsHeaders['commentswritten'] + 1).setValue((Number(getValueByHeader(row, raterStatsHeaders, 'commentswritten')) || 0) + commentsInSubmission);
             raterStatsSheet.getRange(rowIndex, raterStatsHeaders['lastupdated'] + 1).setValue(getFormattedDateTime(timestamp));
         } else {
-            raterStatsSheet.appendRow([raterId, raterEmail, totalPointsEarned, ratings.length, commentsInSubmission, getFormattedDateTime(timestamp)]);
+            raterStatsSheet.appendRow([raterId, normalizedRaterEmail, totalPointsEarned, ratings.length, commentsInSubmission, getFormattedDateTime(timestamp)]);
         }
 
         // --- Batch update PerformerStats ---
@@ -785,7 +983,9 @@ function handleGetTodaysRatings(payload) {
     const usersHeadersRaw = usersData.shift();
     if (!usersHeadersRaw) return createSuccessResponse({ ratings: {} });
     const usersHeaders = getHeaderMap(usersHeadersRaw);
-    const raterRow = usersData.find(row => getValueByHeader(row, usersHeaders, 'email') === raterEmail);
+
+    const normalizedRaterEmail = (raterEmail || '').trim().toLowerCase();
+    const raterRow = usersData.find(row => getValueByHeader(row, usersHeaders, 'email').toLowerCase() === normalizedRaterEmail);
     if (!raterRow) return createSuccessResponse({ ratings: {} });
     const raterId = getValueByHeader(raterRow, usersHeaders, 'userid');
 
@@ -956,7 +1156,8 @@ function handleGetRaterStats(raterEmail) {
   const usersHeadersRaw = usersData.shift();
   if (!usersHeadersRaw) return createSuccessResponse({ stats: { totalSP: 0, ratingsSubmitted: 0, commentsWritten: 0 }});
   const usersHeaders = getHeaderMap(usersHeadersRaw);
-  const userRow = usersData.find(row => getValueByHeader(row, usersHeaders, 'email') === raterEmail);
+  const normalizedRaterEmail = (raterEmail || '').trim().toLowerCase();
+  const userRow = usersData.find(row => getValueByHeader(row, usersHeaders, 'email').toLowerCase() === normalizedRaterEmail);
   if (!userRow) return createSuccessResponse({ stats: { totalSP: 0, ratingsSubmitted: 0, commentsWritten: 0 }});
   const userId = getValueByHeader(userRow, usersHeaders, 'userid');
   
@@ -1043,4 +1244,124 @@ function handleDebugDateParsing() {
         normalizedDate: normalizeDate(row[0])
     }));
     return createSuccessResponse({ today: getTodaysDateString(), timezone: getSpreadsheetTimeZone(), debugData });
+}
+
+// --- NEW EMAIL CHANGE HANDLERS ---
+
+function handleRequestEmailChange(payload) {
+    const { userId } = payload;
+    const newEmail = (payload.newEmail || '').trim().toLowerCase();
+
+    if (!userId || !newEmail || !/\S+@\S+\.\S+/.test(newEmail)) {
+        return createErrorResponse("Valid User ID and new email are required.", 400);
+    }
+    
+    const lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+
+    try {
+        const ss = SpreadsheetApp.getActiveSpreadsheet();
+        const usersSheet = ss.getSheetByName(USERS_SHEET_NAME);
+        const data = usersSheet.getDataRange().getValues();
+        const headersRaw = data.shift();
+        const headerMap = getHeaderMap(headersRaw);
+        
+        const userIdIndex = headerMap['userid'];
+        const emailIndex = headerMap['email'];
+
+        const userRow = data.find(row => row[userIdIndex] === userId);
+        if (!userRow) throw new Error("User not found.");
+
+        const oldEmail = userRow[emailIndex];
+        const performerName = getValueByHeader(userRow, headerMap, 'performingname') || getValueByHeader(userRow, headerMap, 'firstname');
+
+        // Generate and store token
+        const token = "E" + Utilities.getUuid().replace(/-/g, "");
+        const expiry = new Date().getTime() + EMAIL_CHANGE_TOKEN_EXPIRATION_MINUTES * 60 * 1000;
+        PropertiesService.getScriptProperties().setProperty(token, JSON.stringify({ userId, newEmail, expiry }));
+
+        // Send verification email to NEW address
+        const verificationUrl = `${ScriptApp.getService().getUrl()}?action=verifyEmailChange&token=${token}`;
+        MailApp.sendEmail({
+            to: newEmail,
+            subject: "Confirm Your Email Change for UKMN",
+            htmlBody: `Hello ${performerName},<br><br>Please click the link below to confirm the change of your email address for your UKMN profile. This link is valid for ${EMAIL_CHANGE_TOKEN_EXPIRATION_MINUTES} minutes.<br><br><a href="${verificationUrl}" style="padding: 10px 20px; background-color: #6d28d9; color: white; text-decoration: none; border-radius: 5px;">Confirm Email Change</a>`,
+            name: "UKMN Performer Profile"
+        });
+
+        // Send notification email to OLD address
+        MailApp.sendEmail({
+            to: oldEmail,
+            subject: "Security Alert: Email Change Request for Your UKMN Profile",
+            htmlBody: `Hello ${performerName},<br><br>A request was made to change the email address associated with your UKMN profile to <strong>${newEmail}</strong>. A confirmation link has been sent to the new address.<br><br>If you did not make this request, please contact support immediately.`,
+            name: "UKMN Performer Profile"
+        });
+
+        return createSuccessResponse({ message: "Verification email sent." });
+
+    } catch (err) {
+        Logger.log(`handleRequestEmailChange Error: ${err.message}\nStack: ${err.stack}`);
+        return createErrorResponse(err.message);
+    } finally {
+        lock.releaseLock();
+    }
+}
+
+
+function handleVerifyEmailChange(token) {
+    if (!token) return HtmlService.createHtmlOutput("<h1>Error</h1><p>Invalid verification link.</p>");
+
+    const lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+
+    try {
+        const scriptProperties = PropertiesService.getScriptProperties();
+        const tokenDataString = scriptProperties.getProperty(token);
+        if (!tokenDataString) return HtmlService.createHtmlOutput("<h1>Error</h1><p>This verification link is invalid or has already been used.</p>");
+        
+        scriptProperties.deleteProperty(token); // Use token immediately
+        const tokenData = JSON.parse(tokenDataString);
+
+        if (new Date().getTime() > tokenData.expiry) {
+            return HtmlService.createHtmlOutput("<h1>Error</h1><p>This verification link has expired. Please request a new one.</p>");
+        }
+
+        const { userId, newEmail } = tokenData;
+
+        // Update Users Sheet
+        const ss = SpreadsheetApp.getActiveSpreadsheet();
+        const usersSheet = ss.getSheetByName(USERS_SHEET_NAME);
+        const data = usersSheet.getDataRange().getValues();
+        const headersRaw = data.shift();
+        const headerMap = getHeaderMap(headersRaw);
+        
+        const userIdIndex = headerMap['userid'];
+        const emailIndex = headerMap['email'];
+        const rowIndex = data.findIndex(row => row[userIdIndex] === userId);
+        if (rowIndex === -1) throw new Error("User not found during verification.");
+        
+        usersSheet.getRange(rowIndex + 2, emailIndex + 1).setValue(newEmail);
+        
+        // Update RaterStats Sheet if user exists there
+        const raterStatsSheet = ss.getSheetByName(RATER_STATS_SHEET_NAME);
+        if (raterStatsSheet) {
+          const raterData = raterStatsSheet.getDataRange().getValues();
+          const raterHeadersRaw = raterData.shift();
+          const raterHeaderMap = getHeaderMap(raterHeadersRaw);
+          const raterUserIdIndex = raterHeaderMap['userid'];
+          const raterEmailIndex = raterHeaderMap['email'];
+          const raterRowIndex = raterData.findIndex(row => row[raterUserIdIndex] === userId);
+          if (raterRowIndex !== -1) {
+            raterStatsSheet.getRange(raterRowIndex + 2, raterEmailIndex + 1).setValue(newEmail);
+          }
+        }
+        
+        return HtmlService.createHtmlOutput("<h1>Success!</h1><p>Your email address has been successfully updated. You can now close this window.</p>");
+
+    } catch (err) {
+        Logger.log(`handleVerifyEmailChange Error: ${err.message}\nStack: ${err.stack}`);
+        return HtmlService.createHtmlOutput("<h1>Error</h1><p>An unexpected error occurred. Please try again later or contact support.</p>");
+    } finally {
+        lock.releaseLock();
+    }
 }
