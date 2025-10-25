@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useRef } from 'react';
 import type { RaterStats, ScoutLevel } from '../types.ts';
 import type { UserType, ActiveView } from '../App.tsx';
@@ -9,6 +10,7 @@ const LoginIcon: React.FC<{className?: string}> = ({className}) => ( <svg xmlns=
 const RegisterIcon: React.FC<{className?: string}> = ({className}) => ( <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 20 20" fill="currentColor"><path d="M8 9a3 3 0 100-6 3 3 0 000 6zM8 11a6 6 0 016 6H2a6 6 0 016-6zM16 11a1 1 0 100-2 1 1 0 000 2zm-1-7a1 1 0 11-2 0 1 1 0 012 0zM12 9a1 1 0 100-2 1 1 0 000 2z" /></svg>);
 const UserIcon: React.FC<{className?: string}> = ({className}) => (<svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" /></svg>);
 const StarIcon: React.FC<{className?: string}> = ({className}) => (<svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>);
+const CalendarIcon: React.FC<{className?: string}> = ({className}) => (<svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clipRule="evenodd" /></svg>);
 
 
 interface HeaderProps {
@@ -85,6 +87,15 @@ const Header: React.FC<HeaderProps> = ({ isLoggedIn, userType, userName, pageTit
                     <ul className="p-2">
                         <li>
                             <button 
+                                onClick={() => { onViewChange('BOOKING'); setIsMenuOpen(false); }}
+                                className="w-full flex items-center gap-3 text-left px-3 py-2 text-sm text-gray-200 rounded-md hover:bg-brand-primary hover:text-white transition-colors"
+                            >
+                                <CalendarIcon className="w-5 h-5" /> Book a Slot
+                            </button>
+                        </li>
+                        <div className="h-px bg-gray-700 my-2"></div>
+                        <li>
+                            <button 
                                 onClick={() => { onNavigate('LOGIN'); setIsMenuOpen(false); }}
                                 className="w-full flex items-center gap-3 text-left px-3 py-2 text-sm text-gray-200 rounded-md hover:bg-brand-primary hover:text-white transition-colors"
                             >
@@ -127,9 +138,20 @@ const Header: React.FC<HeaderProps> = ({ isLoggedIn, userType, userName, pageTit
                                     disabled={userType === 'performer' && activeView === 'PROFILE'}
                                     className="w-full flex items-center gap-3 text-left px-3 py-2 text-sm text-gray-200 rounded-md hover:bg-brand-primary hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                    <UserIcon className="w-5 h-5" /> Profile
+                                    <UserIcon className="w-5 h-5" /> My Profile
                                 </button>
                             </li>
+                            {userType === 'performer' && (
+                                <li>
+                                    <button 
+                                        onClick={() => { onViewChange('BOOKING'); setIsMenuOpen(false); }} 
+                                        disabled={activeView === 'BOOKING'}
+                                        className="w-full flex items-center gap-3 text-left px-3 py-2 text-sm text-gray-200 rounded-md hover:bg-brand-primary hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        <CalendarIcon className="w-5 h-5" /> Book a Slot
+                                    </button>
+                                </li>
+                            )}
                             <li>
                                 <button 
                                     onClick={() => { onViewChange('RATING'); setIsMenuOpen(false); }} 

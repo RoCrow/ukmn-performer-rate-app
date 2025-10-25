@@ -1,6 +1,6 @@
 
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import Button from './Button.tsx';
 import type { PerformerRegistrationData } from '../services/performerService.ts';
 import { registerPerformer } from '../services/performerService.ts';
@@ -36,6 +36,12 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ onRegistrationSucce
     const [error, setError] = useState<string | null>(null);
     const [registeredData, setRegisteredData] = useState<ProfileData | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        if (submissionState === 'SUCCESS' && registeredData) {
+            onRegistrationSuccess(registeredData);
+        }
+    }, [submissionState, registeredData, onRegistrationSuccess]);
 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
         const { name, value } = e.target;
@@ -155,26 +161,6 @@ const RegistrationForm: React.FC<RegistrationFormProps> = ({ onRegistrationSucce
             setSubmissionState('ERROR');
         }
     };
-    
-    const handleContinue = () => {
-        if (registeredData) {
-            onRegistrationSuccess(registeredData);
-        }
-    };
-
-    if (submissionState === 'SUCCESS') {
-        return (
-             <div className="bg-gray-800 p-8 rounded-xl shadow-2xl text-center">
-                <h2 className="text-3xl font-bold text-brand-accent mb-4">Registration Complete!</h2>
-                <p className="text-lg text-gray-300">Thank you, {formData.performingName}! Your profile has been successfully created. You can now view your new profile.</p>
-                <div className="mt-8">
-                     <Button onClick={handleContinue} className="w-full">
-                        Continue
-                    </Button>
-                </div>
-            </div>
-        )
-    }
 
   return (
     <form onSubmit={handleSubmit} className="w-full bg-gray-800 p-8 rounded-xl shadow-2xl space-y-6">

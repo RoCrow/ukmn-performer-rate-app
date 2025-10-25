@@ -1,7 +1,7 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
-import type { Performer, Rating, LeaderboardEntry, RaterStats, ScoutLevel } from './types.ts';
+import type { Performer, Rating, LeaderboardEntry, RaterStats, ScoutLevel, Event, Booking } from './types.ts';
 import { getPerformers, submitRatings, getTodaysRatings, getLeaderboardData, getAllTimeLeaderboardData, getFeedbackTags, getRaterStats, getScoutLevels, loginByEmail } from './services/performerService.ts';
+import { bookSlot, getUpcomingEvents } from './services/bookingService.ts';
 import type { PerformerRegistrationData } from './services/performerService.ts';
 import Header from './components/Header.tsx';
 import PerformerCard from './components/PerformerCard.tsx';
@@ -10,18 +10,20 @@ import LoginScreen from './components/LoginScreen.tsx';
 import RunningOrder from './components/RunningOrder.tsx';
 import ProfilePage from './components/ProfilePage.tsx';
 import PerformerLoginRegisterPage from './components/PerformerLoginRegisterPage.tsx';
+import BookingsPage from './components/BookingsPage.tsx';
+import BookingDetailsPage from './components/BookingDetailsPage.tsx';
 
 
 type AuthState = 'LOGGED_OUT' | 'LOGGING_IN' | 'LOGGED_IN';
 type SubmissionStatus = 'IDLE' | 'AWAITING_CONSENT' | 'GETTING_LOCATION' | 'SUBMITTING';
 type Page = 'LOGIN' | 'REGISTER';
 export type UserType = 'audience' | 'performer' | null;
-export type ActiveView = 'PROFILE' | 'RATING';
+export type ActiveView = 'PROFILE' | 'RATING' | 'BOOKING' | 'BOOKING_DETAILS';
 
 type RatingInput = { score: number; tags: string[]; comment: string };
 type SubmissionResult = { success: boolean; pointsEarned: number } | null;
 export type ProfileData = PerformerRegistrationData & { image: string; id: string; };
-
+type PendingBooking = { eventId: string; slotNumber: number; };
 
 const App: React.FC = () => {
   const [performers, setPerformers] = useState<Performer[]>([]);
@@ -51,6 +53,10 @@ const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState<Page>('LOGIN');
   const [activeView, setActiveView] = useState<ActiveView>('RATING');
   const [isSelectingVenue, setIsSelectingVenue] = useState<boolean>(false);
+  
+  const [eventForBooking, setEventForBooking] = useState<Event | null>(null);
+  const [pendingBooking, setPendingBooking] = useState<PendingBooking | null>(null);
+  const [isCompletingBooking, setIsCompletingBooking] = useState(false);
 
 
   // Persists session data to localStorage.
@@ -93,8 +99,61 @@ const App: React.FC = () => {
       setFirstName(performerData.firstName);
       setLastName(performerData.lastName);
       setAuthState('LOGGED_IN');
-      setActiveView('PROFILE');
+      
+      // If there's no pending booking, go to profile. The useEffect will handle it if there is.
+      if (!pendingBooking) {
+          setActiveView('PROFILE');
+      }
   };
+
+  const handleSelectEventForBooking = (event: Event) => {
+    setEventForBooking(event);
+    setActiveView('BOOKING_DETAILS');
+  };
+
+
+  // This effect handles the automatic booking completion after a user logs in.
+  useEffect(() => {
+    const completeBooking = async () => {
+        if (activePerformerProfile && pendingBooking) {
+            setIsCompletingBooking(true); // Show spinner
+            try {
+                // Automatically book the slot now that the user is logged in.
+                await bookSlot(pendingBooking.eventId, activePerformerProfile.id, pendingBooking.slotNumber);
+                
+                // On success, navigate directly to the profile page to see the new booking.
+                setActiveView('PROFILE');
+                
+            } catch (err) {
+                const message = err instanceof Error ? err.message : "An unknown error occurred.";
+                // If booking fails (e.g., slot was taken while they registered), show an alert
+                // and send them to the booking details page to try again.
+                alert(`Could not complete your booking automatically: ${message}. Please select a slot to continue.`);
+                
+                try {
+                    // Fallback to showing the booking details page
+                    const allEvents = await getUpcomingEvents();
+                    const eventDetails = allEvents.find(e => e.id === pendingBooking.eventId);
+                    if (eventDetails) {
+                        setEventForBooking(eventDetails);
+                        setActiveView('BOOKING_DETAILS');
+                    } else {
+                        // This case is unlikely if we just came from there, but handle it.
+                        setActiveView('BOOKING');
+                    }
+                } catch (fetchErr) {
+                     // If we can't even fetch events, just go back to the main booking page.
+                     setActiveView('BOOKING');
+                }
+            } finally {
+                setPendingBooking(null); // Clear pending booking regardless of outcome
+                setIsCompletingBooking(false); // Hide spinner
+            }
+        }
+    };
+    completeBooking();
+  }, [activePerformerProfile, pendingBooking]);
+
 
   const handlePerformerUpdate = (updatedData: ProfileData) => {
       setActivePerformerProfile(updatedData);
@@ -102,13 +161,19 @@ const App: React.FC = () => {
 
   const handleNavigate = (page: Page) => {
     handleLogout(); // Clear any existing session before switching login types
+    setLoginError(null); // Explicitly clear any login error from previous attempts
     setCurrentPage(page);
   };
 
   const handleViewChange = (view: ActiveView) => {
+    const userType = activePerformerProfile ? 'performer' : (authState === 'LOGGED_IN' ? 'audience' : null);
+    
     // If a performer tries to rate without a venue, show the venue selection screen first.
     if (view === 'RATING' && userType === 'performer' && !venueName) {
       setIsSelectingVenue(true);
+      // Even if we show venue selection, we must set the active view
+      // so the header menu state is correct. This fixes the disabled button bug.
+      setActiveView(view); 
     } else {
       setActiveView(view);
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -215,10 +280,10 @@ const App: React.FC = () => {
   }, [venueName, raterEmail]);
 
   useEffect(() => {
-    if (authState === 'LOGGED_IN' && venueName && raterEmail) {
+    if (authState === 'LOGGED_IN' && venueName && raterEmail && activeView === 'RATING') {
       fetchInitialData();
     }
-  }, [authState, fetchInitialData, venueName, raterEmail]);
+  }, [authState, fetchInitialData, venueName, raterEmail, activeView]);
 
   const handleRatingChange = (performerId: string, newScore: number) => {
     if (existingRatings[performerId]) return;
@@ -491,7 +556,17 @@ const App: React.FC = () => {
   }
 
   const renderPage = () => {
-    // Priority 0: An already logged-in user needs to select a venue.
+    // Priority -1: Handle post-login booking spinner
+    if (isCompletingBooking) {
+        return (
+            <div className="flex flex-col justify-center items-center p-4 min-h-[calc(100vh-5rem)]">
+                <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-brand-primary"></div>
+                <p className="mt-4 text-gray-400">Finalizing your booking...</p>
+            </div>
+        );
+    }
+
+    // Priority 1: An already logged-in user needs to select a venue.
     if (isSelectingVenue) {
         return (
             <div className="flex flex-col items-center p-4">
@@ -508,9 +583,30 @@ const App: React.FC = () => {
         );
     }
 
-    // Priority 1: A user is logged in and has a venue. Use activeView to decide what to render.
+    // Handle views that are accessible to everyone (logged in or out)
+    if (activeView === 'BOOKING') {
+      return <BookingsPage onSelectEvent={handleSelectEventForBooking} />;
+    }
+
+    if (activeView === 'BOOKING_DETAILS' && eventForBooking) {
+      return <BookingDetailsPage
+          event={eventForBooking}
+          performer={activePerformerProfile}
+          onLoginRequired={(eventId, slotNumber) => {
+              setPendingBooking({ eventId, slotNumber });
+              setCurrentPage('LOGIN');
+              setActiveView('RATING'); // Fall through to login screen
+              setLoginError("Please log in or register as a performer to book a slot.");
+          }}
+          onNavigateToProfile={() => handleViewChange('PROFILE')}
+          onBack={() => setActiveView('BOOKING')}
+      />
+    }
+
+
+    // Priority 2: A user is logged in and has a venue. Use activeView to decide what to render.
     if (userType) {
-        if (userType === 'performer' && activeView === 'PROFILE' && activePerformerProfile) {
+        if (activeView === 'PROFILE' && activePerformerProfile) {
             return (
                 <div className="flex flex-col items-center p-4">
                     <ProfilePage 
@@ -523,36 +619,38 @@ const App: React.FC = () => {
         }
         
         // Default view for ANY logged-in user (audience, or performer in rating mode) is the rating screen.
-        return (
-            <>
-                <div className="max-w-4xl mx-auto p-4 sm:p-8">
-                    <div className="pb-32">
-                        {!isLoading && !error && !submissionResult && performers.length > 0 && (
-                            <>
-                                <div className="mt-8"><RunningOrder performers={performers} /></div>
-                                <div className="text-center mb-8">
-                                    <h2 className="text-2xl sm:text-3xl font-bold text-white">Tonight's <span className="text-brand-primary">Leaderboard</span> & Rating Sheet</h2>
-                                    <p className="text-gray-400 mt-2">Rate performers to see the leaderboard update in real-time.</p>
-                                </div>
-                            </>
-                        )}
-                        {renderRatingContent()}
-                    </div>
-                </div>
-                {!isLoading && !error && !submissionResult && performers.length > 0 && (
-                    <footer className="fixed bottom-0 left-0 right-0 z-20 p-4 pointer-events-none">
-                        <div className="max-w-lg mx-auto pointer-events-auto flex flex-col items-center gap-3 text-center animate-slide-in-bottom">
-                            <p className="text-sm text-white bg-black/50 backdrop-blur-sm rounded-full px-3 py-1 shadow-lg">{ratedCount} of {totalPerformers - Object.keys(existingRatings).length} new performers rated.</p>
-                            <Button onClick={handleInitialSubmit} disabled={ratedCount === 0 || submissionStatus !== 'IDLE'}>{getButtonText()}</Button>
-                            {submissionError && (<p className="text-red-400 bg-red-900/50 p-3 rounded-lg w-full shadow-lg">{submissionError}</p>)}
+        if (activeView === 'RATING') {
+            return (
+                <>
+                    <div className="max-w-4xl mx-auto p-4 sm:p-8">
+                        <div className="pb-32">
+                            {!isLoading && !error && !submissionResult && performers.length > 0 && (
+                                <>
+                                    <div className="mt-8"><RunningOrder performers={performers} /></div>
+                                    <div className="text-center mb-8">
+                                        <h2 className="text-2xl sm:text-3xl font-bold text-white">Tonight's <span className="text-brand-primary">Leaderboard</span> & Rating Sheet</h2>
+                                        <p className="text-gray-400 mt-2">Rate performers to see the leaderboard update in real-time.</p>
+                                    </div>
+                                </>
+                            )}
+                            {renderRatingContent()}
                         </div>
-                    </footer>
-                )}
-            </>
-        );
+                    </div>
+                    {!isLoading && !error && !submissionResult && performers.length > 0 && (
+                        <footer className="fixed bottom-0 left-0 right-0 z-20 p-4 pointer-events-none">
+                            <div className="max-w-lg mx-auto pointer-events-auto flex flex-col items-center gap-3 text-center animate-slide-in-bottom">
+                                <p className="text-sm text-white bg-black/50 backdrop-blur-sm rounded-full px-3 py-1 shadow-lg">{ratedCount} of {totalPerformers - Object.keys(existingRatings).length} new performers rated.</p>
+                                <Button onClick={handleInitialSubmit} disabled={ratedCount === 0 || submissionStatus !== 'IDLE'}>{getButtonText()}</Button>
+                                {submissionError && (<p className="text-red-400 bg-red-900/50 p-3 rounded-lg w-full shadow-lg">{submissionError}</p>)}
+                            </div>
+                        </footer>
+                    )}
+                </>
+            );
+        }
     }
-
-    // Priority 2: Checking a login token from email link (kept for compatibility)
+    
+    // Priority 3: Checking a login token from email link (kept for compatibility)
     // Or showing universal login spinner
     if (authState === 'LOGGING_IN') {
         return (
@@ -570,7 +668,8 @@ const App: React.FC = () => {
                 <PerformerLoginRegisterPage 
                   onLoginOrRegisterSuccess={handlePerformerLoginOrRegisterSuccess} 
                   onAudienceRegisterSuccess={handleDetailsChanged}
-                  onSwitchToLogin={() => handleNavigate('LOGIN')} 
+                  onSwitchToLogin={() => handleNavigate('LOGIN')}
+                  defaultType={pendingBooking ? 'PERFORMER' : null}
                 />
             </div>
         );
@@ -593,9 +692,13 @@ const App: React.FC = () => {
   let pageTitle: string | null = null;
   if (isSelectingVenue) {
     pageTitle = 'Select a Venue';
+  } else if (activeView === 'BOOKING_DETAILS') {
+      pageTitle = `Book: ${eventForBooking?.venueName || ''}`;
+  } else if (activeView === 'BOOKING') {
+      pageTitle = 'Book a Slot';
   } else if (userType) {
       if (activeView === 'PROFILE') {
-          pageTitle = 'Profile';
+          pageTitle = 'My Profile';
       } else {
           pageTitle = venueName;
       }

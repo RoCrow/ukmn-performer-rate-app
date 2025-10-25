@@ -356,7 +356,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({
             <Button 
               type="submit" 
               className="w-full" 
-              disabled={isVenuesLoading || (mode !== 'LOGIN' && venues.length === 0) || (mode === 'AUDIENCE_REGISTER' && !privacyAccepted) || submissionState === 'SUBMITTING'}
+              // FIX: The `mode !== 'LOGIN'` check is redundant here because this block only renders when mode is not 'LOGIN'.
+              // This caused a TypeScript error about non-overlapping types.
+              disabled={isVenuesLoading || venues.length === 0 || (mode === 'AUDIENCE_REGISTER' && !privacyAccepted) || submissionState === 'SUBMITTING'}
             >
               {submissionState === 'SUBMITTING' 
                 ? 'Please wait...' 

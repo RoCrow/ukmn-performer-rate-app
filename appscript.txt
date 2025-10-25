@@ -14,6 +14,8 @@ const RATINGS_SHEET_NAME = 'Ratings';
 const PERFORMER_STATS_SHEET_NAME = 'PerformerStats';
 const RATER_STATS_SHEET_NAME = 'RaterStats';
 const DATA_VALIDATION_SHEET_NAME = 'DataValidation';
+const BOOKINGS_SHEET_NAME = 'Bookings';
+
 
 // --- Token Expiration (in minutes) ---
 const TOKEN_EXPIRATION_MINUTES = 15;
@@ -76,6 +78,7 @@ function doPost(e) {
   try {
     const payload = JSON.parse(e.postData.contents);
     switch(payload.action) {
+      // Existing Actions
       case 'getPerformers': return handleGetPerformers(payload.venueName);
       case 'submitRatings': return handleSubmitRatings(payload);
       case 'requestLogin': return handleRequestLogin(payload);
@@ -96,6 +99,12 @@ function doPost(e) {
       case 'loginByEmail': return handleLoginByEmail(payload.email);
       case 'requestPerformerLoginLink': return handleRequestPerformerLoginLink(payload.email);
       case 'debugDateParsing': return handleDebugDateParsing();
+      // New Booking Actions
+      case 'getUpcomingEvents': return handleGetUpcomingEvents();
+      case 'getPerformerBookings': return handleGetPerformerBookings(payload.userId);
+      case 'getEventDetails': return handleGetEventDetails(payload.eventId);
+      case 'bookSlot': return handleBookSlot(payload.eventId, payload.userId, payload.slotNumber);
+      case 'cancelBooking': return handleCancelBooking(payload.bookingId, payload.userId);
       default: return createErrorResponse(`Unknown action: ${payload.action}`, 400);
     }
   } catch (err) {
@@ -347,6 +356,23 @@ function getFormattedDateTime(date) {
 
 function getTodaysDateString() {
     return Utilities.formatDate(new Date(), getSpreadsheetTimeZone(), 'yyyy-MM-dd');
+}
+
+function formatSheetTime(timeValue, timezone) {
+  if (timeValue instanceof Date) {
+    return Utilities.formatDate(timeValue, timezone, "HH:mm");
+  }
+  // Handles cases where time might be a string already
+  if (typeof timeValue === 'string') {
+      try {
+          // Attempt to parse it as a date to handle various formats
+          const parsedDate = new Date(timeValue);
+          if (!isNaN(parsedDate)) {
+             return Utilities.formatDate(parsedDate, timezone, "HH:mm");
+          }
+      } catch(e) { /* ignore parse error and return original */ }
+  }
+  return timeValue;
 }
 
 function normalizeDate(dateValue) {
@@ -1361,6 +1387,352 @@ function handleVerifyEmailChange(token) {
     } catch (err) {
         Logger.log(`handleVerifyEmailChange Error: ${err.message}\nStack: ${err.stack}`);
         return HtmlService.createHtmlOutput("<h1>Error</h1><p>An unexpected error occurred. Please try again later or contact support.</p>");
+    } finally {
+        lock.releaseLock();
+    }
+}
+
+// =================================================================
+// NEW BOOKING HANDLER FUNCTIONS
+// =================================================================
+
+function handleGetUpcomingEvents() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const eventsSheet = ss.getSheetByName(EVENTS_SHEET_NAME);
+  const venuesSheet = ss.getSheetByName(VENUES_SHEET_NAME);
+  const bookingsSheet = ss.getSheetByName(BOOKINGS_SHEET_NAME);
+  if (!eventsSheet || !venuesSheet || !bookingsSheet) {
+    throw new Error("Missing required sheets for booking (Events, Venues, Bookings).");
+  }
+  const timezone = getSpreadsheetTimeZone();
+
+  // 1. Cache venues and bookings
+  const venuesData = venuesSheet.getDataRange().getValues();
+  const venuesHeaderRaw = venuesData.shift();
+  const venuesHeaders = getHeaderMap(venuesHeaderRaw);
+  const venuesMap = new Map(venuesData.map(row => [getValueByHeader(row, venuesHeaders, 'venueid'), row]));
+  
+  const bookingsData = bookingsSheet.getDataRange().getValues();
+  bookingsData.shift(); // remove headers
+  const bookingsByEvent = bookingsData.reduce((acc, row) => {
+    const eventId = row[1]; // Assuming EventID is column B
+    if (row[4] === 'Confirmed') { // Assuming Status is column E
+        if (!acc[eventId]) acc[eventId] = 0;
+        acc[eventId]++;
+    }
+    return acc;
+  }, {});
+
+  // 2. Filter for upcoming, open events
+  const now = new Date();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const eventsData = eventsSheet.getDataRange().getValues();
+  const eventsHeadersRaw = eventsData.shift();
+  const eventsHeaders = getHeaderMap(eventsHeadersRaw);
+  
+  const upcomingEvents = eventsData.map(row => {
+    const eventDateValue = getValueByHeader(row, eventsHeaders, 'eventdate');
+    const bookingOpensValue = getValueByHeader(row, eventsHeaders, 'bookingopensdate');
+    const bookingClosesValue = getValueByHeader(row, eventsHeaders, 'bookingclosesdate');
+    const status = getValueByHeader(row, eventsHeaders, 'status') || '';
+
+    if (!eventDateValue || !bookingOpensValue || !bookingClosesValue) return null;
+    
+    const eventDate = new Date(eventDateValue);
+    const bookingOpens = new Date(bookingOpensValue);
+    const bookingCloses = new Date(bookingClosesValue);
+
+    // Filter logic: Event date must not be in the past. Booking must be open. Status must be 'Open'.
+    if (eventDate < today || bookingOpens > now || now >= bookingCloses || status.toLowerCase() !== 'open') return null;
+
+    const eventId = getValueByHeader(row, eventsHeaders, 'eventid');
+    const totalSlots = Number(getValueByHeader(row, eventsHeaders, 'totalslotsavailable')) || 0;
+    const bookedCount = bookingsByEvent[eventId] || 0;
+    const venueRow = venuesMap.get(getValueByHeader(row, eventsHeaders, 'venueid'));
+    
+    const startTime = getValueByHeader(row, eventsHeaders, 'starttime');
+    const endTime = getValueByHeader(row, eventsHeaders, 'endtime');
+
+    let venueAddress, venueGoogleMapsLink, venueTelephone;
+
+    if (venueRow) {
+        const street = getValueByHeader(venueRow, venuesHeaders, 'street');
+        const city = getValueByHeader(venueRow, venuesHeaders, 'city');
+        const postcode = getValueByHeader(venueRow, venuesHeaders, 'postcode');
+        venueAddress = [street, city, postcode].filter(Boolean).join(', ');
+        
+        const latitude = getValueByHeader(venueRow, venuesHeaders, 'latitude');
+        const longitude = getValueByHeader(venueRow, venuesHeaders, 'longitude');
+        if (latitude && longitude) {
+            venueGoogleMapsLink = `https://www.google.com/maps?q=${latitude},${longitude}`;
+        }
+
+        venueTelephone = getValueByHeader(venueRow, venuesHeaders, 'venuephone');
+    }
+
+
+    return {
+      id: eventId,
+      venueName: venueRow ? getValueByHeader(venueRow, venuesHeaders, 'venuename') : 'Unknown Venue',
+      date: normalizeDate(eventDate),
+      startTime: formatSheetTime(startTime, timezone),
+      endTime: formatSheetTime(endTime, timezone),
+      totalSlots: totalSlots,
+      availableSlots: totalSlots - bookedCount,
+      venueAddress: venueAddress || undefined,
+      venueGoogleMapsLink: venueGoogleMapsLink || undefined,
+      venueTelephone: venueTelephone || undefined,
+    };
+  }).filter(Boolean).sort((a,b) => new Date(a.date) - new Date(b.date));
+
+  return createSuccessResponse({ events: upcomingEvents });
+}
+
+function handleGetPerformerBookings(userId) {
+  if (!userId) return createErrorResponse("User ID is required.", 400);
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const bookingsSheet = ss.getSheetByName(BOOKINGS_SHEET_NAME);
+  const eventsSheet = ss.getSheetByName(EVENTS_SHEET_NAME);
+  const venuesSheet = ss.getSheetByName(VENUES_SHEET_NAME);
+  
+  // 1. Cache events and venues
+  const eventsData = eventsSheet.getDataRange().getValues();
+  const eventsHeadersRaw = eventsData.shift();
+  const eventsHeaders = getHeaderMap(eventsHeadersRaw);
+  const eventsMap = new Map(eventsData.map(row => [getValueByHeader(row, eventsHeaders, 'eventid'), row]));
+
+  const venuesData = venuesSheet.getDataRange().getValues();
+  const venuesHeadersRaw = venuesData.shift();
+  const venuesHeaders = getHeaderMap(venuesHeadersRaw);
+  const venuesMap = new Map(venuesData.map(row => [getValueByHeader(row, venuesHeaders, 'venueid'), getValueByHeader(row, venuesHeaders, 'venuename')]));
+
+  // 2. Find user's bookings
+  const bookingsData = bookingsSheet.getDataRange().getValues();
+  const bookingsHeadersRaw = bookingsData.shift();
+  const bookingsHeaders = getHeaderMap(bookingsHeadersRaw);
+  
+  const timezone = getSpreadsheetTimeZone();
+  const now = new Date();
+  const pastBookings = [];
+  const upcomingBookings = [];
+
+  bookingsData.forEach(row => {
+    if (getValueByHeader(row, bookingsHeaders, 'userid') === userId) {
+      const eventId = getValueByHeader(row, bookingsHeaders, 'eventid');
+      const eventRow = eventsMap.get(eventId);
+      if (!eventRow) return;
+
+      const eventDate = new Date(getValueByHeader(eventRow, eventsHeaders, 'eventdate'));
+      const booking = {
+        id: getValueByHeader(row, bookingsHeaders, 'bookingid'),
+        event: {
+          id: eventId,
+          venueName: venuesMap.get(getValueByHeader(eventRow, eventsHeaders, 'venueid')),
+          date: normalizeDate(eventDate),
+          startTime: formatSheetTime(getValueByHeader(eventRow, eventsHeaders, 'starttime'), timezone),
+        },
+        slotNumber: getValueByHeader(row, bookingsHeaders, 'slotnumber'),
+        status: getValueByHeader(row, bookingsHeaders, 'status'),
+      };
+
+      if (eventDate < now) {
+        pastBookings.push(booking);
+      } else {
+        upcomingBookings.push(booking);
+      }
+    }
+  });
+
+  return createSuccessResponse({ 
+      upcoming: upcomingBookings.sort((a, b) => new Date(a.event.date) - new Date(a.event.date)), 
+      past: pastBookings.sort((a, b) => new Date(b.event.date) - new Date(a.event.date)),
+  });
+}
+
+function handleGetEventDetails(eventId) {
+    if (!eventId) return createErrorResponse("Event ID is required.", 400);
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const bookingsSheet = ss.getSheetByName(BOOKINGS_SHEET_NAME);
+    const usersSheet = ss.getSheetByName(USERS_SHEET_NAME);
+
+    // Cache users
+    const usersData = usersSheet.getDataRange().getValues();
+    const usersHeaderRaw = usersData.shift();
+    const usersHeaders = getHeaderMap(usersHeaderRaw);
+    const usersMap = new Map(usersData.map(row => [getValueByHeader(row, usersHeaders, 'userid'), getValueByHeader(row, usersHeaders, 'performingname')]));
+    
+    // Get bookings for the event
+    const bookingsData = bookingsSheet.getDataRange().getValues();
+    const bookingsHeadersRaw = bookingsData.shift();
+    const bookingsHeaders = getHeaderMap(bookingsHeadersRaw);
+    
+    const bookedSlots = bookingsData
+      .filter(row => getValueByHeader(row, bookingsHeaders, 'eventid') === eventId && getValueByHeader(row, bookingsHeaders, 'status') === 'Confirmed')
+      .map(row => {
+        const userId = getValueByHeader(row, bookingsHeaders, 'userid');
+        return {
+          slotNumber: getValueByHeader(row, bookingsHeaders, 'slotnumber'),
+          performer: {
+            id: userId,
+            name: usersMap.get(userId) || 'Unknown Performer'
+          }
+        };
+      });
+
+    return createSuccessResponse({ slots: bookedSlots });
+}
+
+function handleBookSlot(eventId, userId, slotNumber) {
+    if (!eventId || !userId || !slotNumber) return createErrorResponse("Event, User, and Slot Number are required.", 400);
+
+    const lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+
+    try {
+        const ss = SpreadsheetApp.getActiveSpreadsheet();
+        const eventsSheet = ss.getSheetByName(EVENTS_SHEET_NAME);
+        const bookingsSheet = ss.getSheetByName(BOOKINGS_SHEET_NAME);
+
+        // 1. Validate event
+        const eventsData = eventsSheet.getDataRange().getValues();
+        const eventsHeadersRaw = eventsData.shift();
+        const eventsHeaders = getHeaderMap(eventsHeadersRaw);
+        const eventRow = eventsData.find(row => getValueByHeader(row, eventsHeaders, 'eventid') === eventId);
+        if (!eventRow) throw new Error("Event not found.");
+        const totalSlots = Number(getValueByHeader(eventRow, eventsHeaders, 'totalslotsavailable')) || 0;
+        
+        if (slotNumber < 1 || slotNumber > totalSlots) {
+            throw new Error("Invalid slot number selected.");
+        }
+
+        // 2. Check current bookings
+        const bookingsData = bookingsSheet.getDataRange().getValues();
+        const bookingsHeadersRaw = bookingsData.shift();
+        const bookingsHeaders = getHeaderMap(bookingsHeadersRaw);
+        
+        const confirmedBookingsForEvent = bookingsData.filter(row => 
+            getValueByHeader(row, bookingsHeaders, 'eventid') === eventId && 
+            getValueByHeader(row, bookingsHeaders, 'status') === 'Confirmed'
+        );
+
+        if (confirmedBookingsForEvent.some(row => getValueByHeader(row, bookingsHeaders, 'userid') === userId)) {
+            throw new Error("You have already booked a slot for this event.");
+        }
+        
+        // Check if the specific slot is already taken
+        if (confirmedBookingsForEvent.some(row => getValueByHeader(row, bookingsHeaders, 'slotnumber') == slotNumber)) {
+            throw new Error(`Slot #${slotNumber} is no longer available. Please select another.`);
+        }
+        
+        // 3. Create new booking
+        const newBookingId = `booking-${Utilities.getUuid()}`;
+        
+        bookingsSheet.appendRow([
+            newBookingId,
+            eventId,
+            slotNumber,
+            userId,
+            'Confirmed',
+            getFormattedDateTime(new Date()),
+            '' // Notes
+        ]);
+
+        return createSuccessResponse({ message: `Successfully booked slot #${slotNumber}.`, slotNumber: slotNumber });
+
+    } catch (err) {
+        Logger.log(`handleBookSlot Error: ${err.message}`);
+        return createErrorResponse(err.message);
+    } finally {
+        lock.releaseLock();
+    }
+}
+
+function handleCancelBooking(bookingId, userId) {
+    // 1. Log incoming data
+    Logger.log(`--- handleCancelBooking initiated ---`);
+    Logger.log(`Received bookingId: ${bookingId} (type: ${typeof bookingId})`);
+    Logger.log(`Received userId: ${userId} (type: ${typeof userId})`);
+
+    if (!bookingId || !userId) {
+        Logger.log("Error: Missing bookingId or userId.");
+        return createErrorResponse("Booking and User ID are required.", 400);
+    }
+
+    const lock = LockService.getScriptLock();
+    lock.waitLock(30000);
+
+    try {
+        const ss = SpreadsheetApp.getActiveSpreadsheet();
+        const bookingsSheet = ss.getSheetByName(BOOKINGS_SHEET_NAME);
+        if (!bookingsSheet) throw new Error("Bookings sheet not found.");
+        
+        const data = bookingsSheet.getDataRange().getValues();
+        if (data.length < 2) throw new Error("Bookings sheet is empty or contains no data.");
+
+        const headersRaw = data.shift();
+        const headerMap = getHeaderMap(headersRaw);
+        
+        // 2. Log header map and column indices
+        Logger.log(`Header Map: ${JSON.stringify(headerMap)}`);
+        const bookingIdCol = headerMap['bookingid'];
+        const userIdCol = headerMap['userid'];
+        const statusCol = headerMap['status'];
+        Logger.log(`Column Indices -> bookingId: ${bookingIdCol}, userId: ${userIdCol}, status: ${statusCol}`);
+
+        if ([bookingIdCol, userIdCol, statusCol].includes(undefined)) {
+            throw new Error("Could not find required columns (BookingID, UserID, Status) in Bookings sheet.");
+        }
+        
+        let rowIndexToUpdate = -1;
+        let foundBookingButNotUser = false;
+        let unauthorizedUserId = null;
+
+        for (let i = 0; i < data.length; i++) {
+            const row = data[i];
+            const sheetBookingId = row[bookingIdCol];
+            const sheetUserId = row[userIdCol];
+            
+            // Using strict equality `===` and trimming whitespace is safer.
+            if (String(sheetBookingId).trim() === String(bookingId).trim()) {
+                Logger.log(`Row ${i+2}: BookingID matched. Now checking UserID.`);
+                Logger.log(`Row ${i+2}: Comparing sheet UserID '${sheetUserId}' with '${userId}'.`);
+
+                if (String(sheetUserId).trim() === String(userId).trim()) {
+                    rowIndexToUpdate = i + 2; // +1 for 0-based index, +1 for the header row
+                    Logger.log(`Row ${i+2}: UserID matched. Setting rowIndexToUpdate to ${rowIndexToUpdate}.`);
+                    break;
+                } else {
+                    foundBookingButNotUser = true;
+                    unauthorizedUserId = sheetUserId;
+                    Logger.log(`Row ${i+2}: UserID did NOT match. Expected '${userId}', but found '${sheetUserId}'.`);
+                    break; 
+                }
+            }
+        }
+        
+        if (foundBookingButNotUser) {
+            throw new Error(`You are not authorized to cancel this booking.`);
+        }
+        
+        if (rowIndexToUpdate > -1) {
+            Logger.log(`Updating sheet at row ${rowIndexToUpdate}, column ${statusCol + 1} to 'Cancelled'.`);
+            bookingsSheet.getRange(rowIndexToUpdate, statusCol + 1).setValue('Cancelled');
+            SpreadsheetApp.flush(); // Force changes to be written immediately before returning.
+            Logger.log(`--- handleCancelBooking success ---`);
+            return createSuccessResponse({ message: "Booking successfully cancelled." });
+        } else {
+            Logger.log(`Loop finished. No matching booking found for bookingId: ${bookingId}.`);
+            throw new Error("Booking not found. It may have already been cancelled or does not exist.");
+        }
+
+    } catch (err) {
+        Logger.log(`!!! handleCancelBooking Error: ${err.message}`);
+        Logger.log(`Stack: ${err.stack}`);
+        return createErrorResponse(err.message);
     } finally {
         lock.releaseLock();
     }

@@ -3,20 +3,22 @@ import RegistrationForm from './RegistrationForm.tsx';
 import LoginScreen from './LoginScreen.tsx';
 import type { ProfileData } from '../App.tsx';
 
+type RegistrationType = 'AUDIENCE' | 'PERFORMER';
+
 interface PerformerLoginRegisterPageProps {
   onLoginOrRegisterSuccess: (data: ProfileData) => void;
   onAudienceRegisterSuccess: (details: { email: string, venue: string, firstName: string, lastName: string }) => void;
   onSwitchToLogin: () => void;
+  defaultType?: RegistrationType | null;
 }
-
-type RegistrationType = 'AUDIENCE' | 'PERFORMER';
 
 const PerformerLoginRegisterPage: React.FC<PerformerLoginRegisterPageProps> = ({ 
   onLoginOrRegisterSuccess, 
   onAudienceRegisterSuccess,
-  onSwitchToLogin 
+  onSwitchToLogin,
+  defaultType = null
 }) => {
-  const [registrationType, setRegistrationType] = useState<RegistrationType | null>(null);
+  const [registrationType, setRegistrationType] = useState<RegistrationType | null>(defaultType);
 
   const commonButtonClasses = 'w-full py-4 text-lg font-bold rounded-lg transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900';
   const selectedButtonClasses = 'bg-brand-primary text-white shadow-lg focus:ring-brand-primary';

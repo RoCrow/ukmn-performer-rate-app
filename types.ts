@@ -38,3 +38,38 @@ export interface ScoutLevel {
   name: string;
   minSP: number;
 }
+
+// New types for the Booking System
+export interface Event {
+  id: string;
+  venueName: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  totalSlots: number;
+  availableSlots: number;
+  venueAddress?: string;
+  venueGoogleMapsLink?: string;
+  venueTelephone?: string;
+}
+
+export interface Booking {
+  id: string;
+  event: {
+    id: string;
+    venueName:string;
+    date: string;
+    startTime: string;
+  };
+  slotNumber: number;
+  status: 'Confirmed' | 'Cancelled' | 'No-Show' | 'Checked-In';
+}
+
+export interface Slot {
+    slotNumber: number;
+    status: 'AVAILABLE' | 'BOOKED';
+    performer?: {
+        id: string;
+        name: string;
+    }
+}
